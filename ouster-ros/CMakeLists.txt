@@ -21,6 +21,7 @@ find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED COMPONENTS common)
 find_package(pcl_conversions REQUIRED)
 find_package(tf2_eigen REQUIRED)
+find_package(cv_bridge REQUIRED)
 find_package(OpenCV REQUIRED)
 
 # ==== Options ====
@@ -74,6 +75,7 @@ set(ouster_ros_library_deps
   pcl_conversions
   tf2
   tf2_eigen
+  cv_bridge
   OpenCV
 )
 

@@ -10,6 +10,8 @@ WORKDIR ${ROS2_WS}
 RUN apt-get update && apt-get install -y \
     ros-${ROS_DISTRO}-pcl-ros \
     ros-${ROS_DISTRO}-tf2-eigen \
+    ros-${ROS_DISTRO}-cv-bridge \
+    libopencv-dev \
     build-essential \
     libeigen3-dev \
     libjsoncpp-dev \
