@@ -1,0 +1,48 @@
+# 1. Base Image
+FROM ros:jazzy-ros-base
+
+# 2. Build Arguments & Environment
+ARG ROS_DISTRO=jazzy
+ENV ROS2_WS=/opt/ros2_ws
+WORKDIR ${ROS2_WS}
+
+# 3. Install Requirements (as listed in README ### Linux section)
+RUN apt-get update && apt-get install -y \
+    ros-${ROS_DISTRO}-pcl-ros \
+    ros-${ROS_DISTRO}-tf2-eigen \
+    build-essential \
+    libeigen3-dev \
+    libjsoncpp-dev \
+    libspdlog-dev \
+    libcurl4-openssl-dev \
+    libpcap-dev \
+    libtins-dev \
+    git \
+    cmake \
+    python3-colcon-common-extensions \
+    && rm -rf /var/lib/apt/lists/*
+
+# 4. Clone and Build
+RUN mkdir -p ${ROS2_WS}/src
+COPY . ${ROS2_WS}/src/
+
+# Set the shell to bash so we can use 'source'
+SHELL ["/bin/bash", "-c"]
+
+# 5. Ensure Ouster SDK is present (Fix for the CMake Error)
+RUN if [ ! -d "${ROS2_WS}/src/ouster-ros/ouster-sdk" ] || [ ! -f "${ROS2_WS}/src/ouster-ros/ouster-sdk/CMakeLists.txt" ]; then \
+        echo "OusterSDK missing. Fetching..." && \
+        rm -rf ${ROS2_WS}/src/ouster-ros/ouster-sdk && \
+        git clone --recursive https://github.com/ouster-lidar/ouster_example.git ${ROS2_WS}/src/ouster-ros/ouster-sdk; \
+    fi
+
+# 6. Build using the requested format
+RUN source /opt/ros/jazzy/setup.bash && \
+    colcon build --executor sequential --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
+
+# 7. Entrypoint
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["ros2", "launch", "ouster_ros", "driver.launch.py", "sensor_hostname:=192.168.1.201", "viz:=false"]

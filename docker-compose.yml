@@ -1,0 +1,17 @@
+version: '2.4'
+
+services:
+  ouster-driver:
+    image: ghcr.io/metrolla-inc/ouster-ros-driver:latest
+    restart: always
+    network_mode: host
+    privileged: true
+    environment:
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      - ROS_DOMAIN_ID=0
+    # Overriding the entrypoint command to use the specific sensor IP
+    command: >
+      ros2 launch ouster_ros sensor.launch.xml
+      sensor_hostname:=192.168.1.201
+      viz:=false
+      proc_mask:=IMG|PCL|IMU

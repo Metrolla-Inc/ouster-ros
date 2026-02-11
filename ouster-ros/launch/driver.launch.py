@@ -43,12 +43,17 @@ def generate_launch_description():
     os_driver_name_arg = DeclareLaunchArgument(
         'os_driver_name', default_value='os_driver')
 
+    sensor_hostname = LaunchConfiguration('sensor_hostname')
+    sensor_hostname_arg = DeclareLaunchArgument(
+        'sensor_hostname', default_value='',
+        description='hostname or IP address of the sensor')
+
     os_driver = LifecycleNode(
         package='ouster_ros',
         executable='os_driver',
         name=os_driver_name,
         namespace=ouster_ns,
-        parameters=[params_file],
+        parameters=[params_file, {'sensor_hostname': sensor_hostname}],
         output='screen',
     )
 
@@ -97,6 +102,7 @@ def generate_launch_description():
         ouster_ns_arg,
         rviz_enable_arg,
         os_driver_name_arg,
+        sensor_hostname_arg,
         rviz_launch,
         os_driver,
         sensor_configure_event,

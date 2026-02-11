@@ -8,7 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     OUSTER_ROS_PATH=/opt/ros2_ws/src/ouster-ros
 
 RUN set -xue \
-# Turn off installing extra packages globally to slim down rosdep install
+# Turn off installing extra packages globally to slim down rosdep install \
 && echo 'APT::Install-Recommends "0";' > /etc/apt/apt.conf.d/01norecommend \
 && apt-get update \
 && apt-get install -y       \
@@ -63,11 +63,8 @@ RUN source /opt/ros/$ROS_DISTRO/setup.bash && colcon build \
 RUN source /opt/ros/$ROS_DISTRO/setup.bash && colcon test \
     --ctest-args tests ouster_ros --rerun-failed --output-on-failure
 
-# Entrypoint for running Ouster ros:
-#
-# Usage: docker run --rm -it ouster-ros [sensor.launch parameters ..]
-#
-ENTRYPOINT ["bash", "-c", "set -e \
-&& source ./install/setup.bash \
-&& ros2 launch ouster_ros sensor.launch.xml \"$@\" \
-", "ros-entrypoint"]
+# Copy and setup entrypoint script
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
