@@ -21,6 +21,7 @@ find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED COMPONENTS common)
 find_package(pcl_conversions REQUIRED)
 find_package(tf2_eigen REQUIRED)
+find_package(OpenCV REQUIRED)
 
 # ==== Options ====
 add_compile_options(-Wall -Wextra)
@@ -38,9 +39,6 @@ set(_ouster_ros_INCLUDE_DIRS
 )
 
 # ==== Libraries ====
-# Build static libraries and bundle them into ouster_ros using the `--whole-archive` flag. This is
-# necessary because catkin doesn't interoperate easily with target-based cmake builds. Object
-# libraries are the recommended way to do this, but require >=3.13 to propagate usage requirements.
 set(_SAVE_BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS})
 set(BUILD_SHARED_LIBS OFF)
 
@@ -52,7 +50,9 @@ find_package(OusterSDK REQUIRED)
 set(BUILD_SHARED_LIBS ${_SAVE_BUILD_SHARED_LIBS})
 
 # catkin adds all include dirs to a single variable, don't try to use targets
-include_directories(${_ouster_ros_INCLUDE_DIRS})
+include_directories(
+  ${_ouster_ros_INCLUDE_DIRS}
+  ${OpenCV_INCLUDE_DIRS})
 
 # use only MPL-licensed parts of eigen
 add_definitions(-DEIGEN_MPL2_ONLY)
@@ -74,6 +74,7 @@ set(ouster_ros_library_deps
   pcl_conversions
   tf2
   tf2_eigen
+  OpenCV
 )
 
 ament_target_dependencies(ouster_ros_library
@@ -85,7 +86,8 @@ target_link_libraries(ouster_ros_library
     ouster_build
     pcl_common
   # PRIVATE (unsupported)
-  -Wl,--whole-archive ${OUSTER_TARGET_LINKS} -Wl,--no-whole-archive
+  ${OUSTER_TARGET_LINKS}
+  ${OpenCV_LIBRARIES}
 )
 
 # helper method to construct ouster-ros components
