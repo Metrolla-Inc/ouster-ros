@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "recorded": "2026-11-21",
+  "vendors": [
+    {
+      "id": "ouster-ros ros2",
+      "url": "https://github.com/ouster-lidar/ouster-ros.git",
+      "branch": "ros2",
+      "tags": [
+        "ros2-v*",
+        "jazzy-*",
+        "release-*"
+      ],
+      "fork_ref": "ros2",
+      "base": {
+        "commit": "a46cda112e002d6c46080057e19e4465a8fd8c99",
+        "how": "merge-base of fork branch ros2 (541d632 = fleet tag v1.0.0) and vendor ros2 on 2026-11-21. The fork default branch master is the vendor ROS 1 master line without Metrolla changes and is not watched"
+      }
+    },
+    {
+      "id": "ouster-sdk",
+      "url": "https://github.com/ouster-lidar/ouster-sdk.git",
+      "branch": "master",
+      "tags": [
+        "*"
+      ],
+      "fork_ref": "ros2",
+      "base": {
+        "commit": "483206f0baeffbbc11ee0883d54a651a5216563b",
+        "how": "the ouster-ros/ouster-sdk submodule commit on fork branch ros2 and tag v1.0.0 on 2026-11-21 (Release-0.11.1, 2024-05-15); recorded because the default branch master does not carry the ros2 submodule"
+      }
+    }
+  ],
+  "not_checked": []
+}
