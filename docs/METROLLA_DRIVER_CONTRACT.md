@@ -93,8 +93,21 @@ environment:
 # no command, no config file mount
 ```
 
+Same uid for every ROS container on the host: with host IPC, Fast DDS (the image's default RMW)
+delivers between processes through shared memory, and a subscriber running as another uid gets
+discovery but no data (seen in the smoke test: a root subscriber received nothing from the driver
+at uid 97000). The smoke test runs its subscriber as 97000.
+
 Host firewall: allow UDP `DATA_PORT` and `DATA_PORT + 1` in from the sensor, TCP 80 out to the
 sensor.
+
+## Vendor code change
+
+One, in its own commit: `~OusterDriver` now stops the sensor connection thread before its packet
+handlers and publishers are destroyed (`os_driver_node.cpp`; `stop_sensor_connection_thread` moved
+to protected in `os_sensor_node.h`). Before, SIGTERM while packets arrived could crash the node
+(exit 139 in the smoke test, intermittently). The vendor's `ros2` head has the same destructor;
+worth reporting upstream. It affects legacy mode too, only at shutdown.
 
 ## Not proven (needs hardware)
 
