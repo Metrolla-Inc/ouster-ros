@@ -1,0 +1,4 @@
+exit 1
+--- stdout
+--- stderr
+ouster-driver: refusing to start: TIME_MODE='ntp' is not available: Ouster sensors have no NTP client; use ptp, gps (sync pulse in), sensor or host

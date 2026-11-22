@@ -1,0 +1,4 @@
+exit 1
+--- stdout
+--- stderr
+ouster-driver: refusing to start: DATA_PORT='65535' is not a usable port; accepted: a whole number 1024-65534 without leading zeros (the UDP port the sensor sends lidar data to, default 7502; IMU data goes to DATA_PORT + 1)

@@ -1,0 +1,4 @@
+exit 1
+--- stdout
+--- stderr
+ouster-driver: refusing to start: DEVICE_PORT='7501' cannot be changed for Ouster sensors; accepted: 80 or unset (the driver configures the sensor through its HTTP API, http://SENSOR_IP/api/v1/..., port 80 fixed in the Ouster SDK)

@@ -1,0 +1,12 @@
+exit 1
+--- stdout
+--- stderr
+ouster-driver: refusing to start: IMU_PORT is a legacy name and is not read with METROLLA_DRIVER_CONTRACT=1; the IMU port is DATA_PORT + 1 in this contract; remove it
+ouster-driver: refusing to start: LIDAR_MODE is a legacy name and is not read with METROLLA_DRIVER_CONTRACT=1; the contract keeps the sensor's own lidar mode (resolution and rate); remove it
+ouster-driver: refusing to start: LIDAR_PORT is a legacy name and is not read with METROLLA_DRIVER_CONTRACT=1; use DATA_PORT
+ouster-driver: refusing to start: PROC_MASK is a legacy name and is not read with METROLLA_DRIVER_CONTRACT=1; the contract publishes PCL|IMU|TLM; remove it
+ouster-driver: refusing to start: SENSOR_HOSTNAME is a legacy name and is not read with METROLLA_DRIVER_CONTRACT=1; use SENSOR_IP
+ouster-driver: refusing to start: SENSOR_PORT is a legacy name and is not read with METROLLA_DRIVER_CONTRACT=1; use DATA_PORT
+ouster-driver: refusing to start: SENSOR_TYPE is a legacy name and is not read with METROLLA_DRIVER_CONTRACT=1; use LIDAR_MODEL
+ouster-driver: refusing to start: TIMESTAMP_MODE is a legacy name and is not read with METROLLA_DRIVER_CONTRACT=1; use TIME_MODE
+ouster-driver: refusing to start: UDP_DEST is a legacy name and is not read with METROLLA_DRIVER_CONTRACT=1; use HOST_IP

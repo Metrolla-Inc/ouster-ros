@@ -1,0 +1,8 @@
+exit 1
+--- stdout
+--- stderr
+ouster-driver: refusing to start: LIDAR_MODEL is set but empty; accepted: an Ouster model name such as os1-128, os0 or osdome-128 (the full list is in the message when the name is unknown)
+ouster-driver: refusing to start: SENSOR_IP is set but empty; accepted: the sensor's own IPv4 address, for example 192.168.1.201
+ouster-driver: refusing to start: SENSOR_ID is set but empty; accepted: a lowercase letter then up to 30 lowercase letters, digits or single '_', or unset it for the default
+ouster-driver: refusing to start: DATA_PORT is set but empty; accepted: a UDP port 1024-65534 (default 7502; the IMU port is DATA_PORT + 1), or unset it for the default
+ouster-driver: refusing to start: TIME_MODE is set but empty; accepted: host, sensor, gps or ptp (default host), or unset it for the default

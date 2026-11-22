@@ -65,6 +65,10 @@ class OusterSensor : public OusterSensorNodeBase {
 
     bool start();
 
+    // Metrolla: protected so that a derived node can stop the thread before its own members go
+    // (see ~OusterDriver).
+    void stop_sensor_connection_thread();
+
    private:
     void declare_parameters();
 
@@ -125,8 +129,6 @@ class OusterSensor : public OusterSensorNodeBase {
                          const sensor::packet_format& pf);
 
     void start_sensor_connection_thread();
-
-    void stop_sensor_connection_thread();
 
     bool get_active_config_no_throw(const std::string& sensor_hostname,
                                     sensor::sensor_config& config);

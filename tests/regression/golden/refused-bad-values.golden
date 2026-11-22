@@ -1,0 +1,12 @@
+exit 1
+--- stdout
+--- stderr
+ouster-driver: refusing to start: SENSOR_IP='192.168.1.0256' is not an IPv4 address; accepted: the sensor's own IPv4 address in dotted decimal without leading zeros, for example 192.168.1.201
+ouster-driver: refusing to start: SENSOR_ID='East' is not a sensor id; accepted: 1-31 characters, a lowercase letter then lowercase letters, digits or single '_' (it becomes the node's ROS namespace)
+ouster-driver: refusing to start: DATA_PORT='80' is not a usable port; accepted: a whole number 1024-65534 without leading zeros (the UDP port the sensor sends lidar data to, default 7502; IMU data goes to DATA_PORT + 1)
+ouster-driver: refusing to start: HOST_IP='192.168.1.100/33' has no usable prefix length; accepted: the host's IPv4 address on the sensor network, optionally with /1-/32, for example 192.168.1.100/24
+ouster-driver: refusing to start: FRAME_ID='1lidar' is not a frame id; accepted: 1-64 characters, letters, digits and '_', not starting with a digit (default os_lidar, or <SENSOR_ID>_os_lidar with SENSOR_ID)
+ouster-driver: refusing to start: POINTCLOUD_TOPIC='/points//x' is not a ROS topic name; accepted: '/'-separated tokens of letters, digits and single '_', each starting with a letter, absolute (/x) or relative to the node's namespace (default points)
+ouster-driver: refusing to start: TIME_MODE='utc' is not a time mode; accepted, any case: host (the default: stamp with the host's receive time, the sensor's own time source is left as it is), sensor (the sensor's internal clock), gps (sync pulse in) or ptp (IEEE 1588); sensor, gps and ptp set the sensor's timestamp_mode
+ouster-driver: refusing to start: PUBLISH_SCAN='maybe' is not a boolean; accepted: 1, true, yes, on or 0, false, no, off, in any case (only a false value is accepted here)
+ouster-driver: refusing to start: OUSTER_RUN_DIR='tmp/ouster' is not an absolute directory path; accepted: an absolute path of letters, digits, '_', '.', '-' and '/' (default /tmp/ouster)

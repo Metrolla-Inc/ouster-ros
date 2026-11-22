@@ -1,0 +1,23 @@
+{
+  "exec": {
+    "argv": [
+      "ros2",
+      "launch",
+      "ouster_ros",
+      "sensor.launch.xml",
+      "sensor_hostname:=192.168.1.201",
+      "viz:=false",
+      "proc_mask:=IMG|PCL|IMU"
+    ],
+    "env": {
+      "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
+      "ROS2_WS": "/opt/ros2_ws",
+      "ROS_DISTRO": "jazzy",
+      "ROS_DOMAIN_ID": "0",
+      "SOURCED": "/opt/ros/jazzy:/opt/ros2_ws/install"
+    }
+  },
+  "exit": 0,
+  "stderr": "",
+  "stdout": ""
+}

@@ -1,0 +1,4 @@
+exit 1
+--- stdout
+--- stderr
+ouster-driver: refusing to start: FRAME_ID='east_os_imu' is the name of the sensor's housing or IMU frame in this image (east_os_imu, east_os_sensor); accepted: another name

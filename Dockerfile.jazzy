@@ -31,16 +31,24 @@ COPY . ${ROS2_WS}/src/
 # Set the shell to bash so we can use 'source'
 SHELL ["/bin/bash", "-c"]
 
-# 5. Ensure Ouster SDK is present (Fix for the CMake Error)
-RUN if [ ! -d "${ROS2_WS}/src/ouster-ros/ouster-sdk" ] || [ ! -f "${ROS2_WS}/src/ouster-ros/ouster-sdk/CMakeLists.txt" ]; then \
-        echo "OusterSDK missing. Fetching..." && \
-        rm -rf ${ROS2_WS}/src/ouster-ros/ouster-sdk && \
-        git clone --recursive https://github.com/ouster-lidar/ouster_example.git ${ROS2_WS}/src/ouster-ros/ouster-sdk; \
+# 5. The Ouster SDK is the ouster-ros/ouster-sdk submodule (pinned commit). Refuse to build without
+#    it: this step used to clone the SDK's moving default branch instead, which builds a different,
+#    untested SDK (tests/regression/test_past_bugs.py).
+RUN if [ ! -f "${ROS2_WS}/src/ouster-ros/ouster-sdk/CMakeLists.txt" ]; then \
+        echo "OusterSDK submodule missing: check out with 'git submodule update --init --recursive'" >&2; \
+        exit 1; \
     fi
 
 # 6. Build using the requested format
 RUN source /opt/ros/jazzy/setup.bash && \
     colcon build --executor sequential --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
+
+# Metrolla driver contract, opt-in (METROLLA_DRIVER_CONTRACT=1, docs/METROLLA_DRIVER_CONTRACT.md):
+# the scripts, and a build-time check that the vendor parameter file still renders and the node
+# exists. Without the switch the image runs exactly as before.
+COPY docker/contract-entrypoint.sh docker/ouster_env.py /opt/metrolla/ouster/
+RUN chmod 0755 /opt/metrolla/ouster/contract-entrypoint.sh /opt/metrolla/ouster/ouster_env.py \
+    && python3 -I /opt/metrolla/ouster/ouster_env.py selfcheck
 
 # 7. Entrypoint
 COPY entrypoint.sh /entrypoint.sh
