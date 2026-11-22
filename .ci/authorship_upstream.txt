@@ -1,0 +1,28 @@
+# Upstream authors of this fork (vendor history). A commit whose author AND committer both match
+# a line here is upstream history brought in by a sync: .ci/authorship_check.py then checks only
+# for assistant markers. Metrolla's own commits never match: they must be Adam Szablya
+# <aszablya@metrolla.com>. One Python regex per line, matched against 'Name <email>'.
+# Add an upstream contributor here in the sync pull request that brings their commit in.
+# Vendor domains:
+@([a-z0-9-]+\.)?ouster\.io>$
+# Individual upstream contributors seen in this fork's history:
+<11663739\+solosuper@users\.noreply\.github\.com>$
+<34632025\+dgarbuzov@users\.noreply\.github\.com>$
+<42921125\+alexchua0108@users\.noreply\.github\.com>$
+<44489146\+kairenw@users\.noreply\.github\.com>$
+<44489146\+kwong0@users\.noreply\.github\.com>$
+<45376386\+tobinhall@users\.noreply\.github\.com>$
+<50892582\+ovaag@users\.noreply\.github\.com>$
+<606033\+samahu@users\.noreply\.github\.com>$
+<64705964\+philippschmaelzle@users\.noreply\.github\.com>$
+<76427549\+louis\-wiesmann@users\.noreply\.github\.com>$
+<chepsiilya@gmail\.com>$
+<daniel\.dsouza5@gmail\.com>$
+<fede\.proni@gmail\.com>$
+<kbearrk@gmail\.com>$
+<morten\.fyhn\.amundsen@gmail\.com>$
+<nkhedekar@users\.noreply\.github\.com>$
+<p\.bandow@hawksracing\.de>$
+<royrinberg@gmail\.com>$
+<standmit@zabstrannik\.ru>$
+<tom@swarmfarm\.com>$
