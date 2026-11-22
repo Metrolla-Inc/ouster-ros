@@ -73,7 +73,10 @@ start_fake() {  # LABEL
 check_cloud() {
     local label=$1 topic=$2 frame=$3; shift 3
     set +e
-    docker run --rm --network host --ipc host -e ROS_LOCALHOST_ONLY=1 \
+    # CHECK_USER: the checker runs as the driver's uid. Fast DDS's shared-memory transport (host
+    # IPC) only delivers between processes that can open each other's segments.
+    docker run --rm --network host --ipc host -e ROS_LOCALHOST_ONLY=1 ${CHECK_USER:+--user "$CHECK_USER"} \
+        --tmpfs /tmp -e ROS_HOME=/tmp/ros -e ROS_LOG_DIR=/tmp/ros/log \
         -v "$REPO:/repo:ro" --entrypoint bash "$IMAGE" -c \
         'source /opt/ros/jazzy/setup.bash && python3 /repo/docker/smoke/check_cloud.py "$@"' \
         check "$topic" "$frame" --recording "$RECORDING" "$@" > "$WORK/$label.check.json"
@@ -81,6 +84,13 @@ check_cloud() {
     set -e
     cat "$WORK/$label.check.json"
     return $code
+}
+
+diagnose() {  # NODE: lifecycle state and topics, as the driver's uid (after a failed check)
+    docker run --rm --network host --ipc host -e ROS_LOCALHOST_ONLY=1 --user 97000:97000 \
+        --tmpfs /tmp -e ROS_HOME=/tmp/ros -e ROS_LOG_DIR=/tmp/ros/log --entrypoint bash "$IMAGE" -c \
+        'source /opt/ros/jazzy/setup.bash && echo "lifecycle $1: $(ros2 lifecycle get "$1" 2>&1)"; ros2 topic list -t 2>&1 | head -20' \
+        diag "$1" || true
 }
 
 stop_and_expect_zero() {  # LABEL
@@ -220,10 +230,10 @@ docker run --rm "${CONTRACT_ENV[@]}" "$IMAGE" check | sed '$d' > "$WORK/expected
 docker exec "$NAME" cat /tmp/ouster/driver_params.yaml > "$WORK/actual.yaml"
 expect "/tmp/ouster/driver_params.yaml in the container equals check's render" \
     diff -u "$WORK/expected.yaml" "$WORK/actual.yaml"
-if check_cloud contract /east/points east_os_lidar --clouds 3 --timeout 90; then
+if CHECK_USER=97000:97000 check_cloud contract /east/points east_os_lidar --clouds 3 --timeout 90; then
     ok "contract: /east/points in frame east_os_lidar, host-time stamps, every pixel"
 else
-    fail "contract: cloud check failed"
+    fail "contract: cloud check failed"; diagnose /east/os_driver
 fi
 expect "contract: metadata written to /tmp/ouster/metadata.json" \
     docker exec "$NAME" test -s /tmp/ouster/metadata.json
@@ -247,10 +257,10 @@ start_fake contract-ptp
 docker run -d --name "$NAME" "${RESTRICT[@]}" "${CONTRACT_ENV[@]}" "$IMAGE" > /dev/null
 # The fake sensor stamps packets with UTC; with TIME_FROM_PTP_1588 the driver subtracts the
 # 37 s TAI-UTC offset (ptp_utc_tai_offset), so stamps are about 37 s behind the clock here.
-if check_cloud contract-ptp /lidar/ouster_points ouster_top --clouds 3 --timeout 90 --stamp-window 40; then
+if CHECK_USER=97000:97000 check_cloud contract-ptp /lidar/ouster_points ouster_top --clouds 3 --timeout 90 --stamp-window 40; then
     ok "contract ptp: /lidar/ouster_points in frame ouster_top, every pixel"
 else
-    fail "contract ptp: cloud check failed"
+    fail "contract ptp: cloud check failed"; diagnose /ouster/os_driver
 fi
 if python3 - "$WORK/contract-ptp.check.json" <<'PY'
 import json, sys

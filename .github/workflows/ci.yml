@@ -42,14 +42,14 @@ jobs:
         run: shellcheck docker/contract-entrypoint.sh docker/smoke/smoke.sh
 
       - name: hadolint
-        # DL3008/DL3009/DL3015 are in Dockerfile.jazzy's v1.0.0 lines (unpinned apt packages,
-        # recommends), kept as they are so the legacy image is built the same way.
+        # DL3008/DL3009/DL3015/SC1091 are in Dockerfile.jazzy's v1.0.0 lines (unpinned apt packages, sourcing
+        # setup.bash, recommends), kept as they are so the legacy image is built the same way.
         run: |
           curl -fsSL -o "$RUNNER_TEMP/hadolint" \
             https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64
           echo "56de6d5e5ec427e17b74fa48d51271c7fc0d61244bf5c90e828aab8362d55010  $RUNNER_TEMP/hadolint" | sha256sum -c -
           chmod +x "$RUNNER_TEMP/hadolint"
-          "$RUNNER_TEMP/hadolint" --ignore DL3008 --ignore DL3009 --ignore DL3015 Dockerfile.jazzy
+          "$RUNNER_TEMP/hadolint" --ignore DL3008 --ignore DL3009 --ignore DL3015 --ignore SC1091 Dockerfile.jazzy
 
   regression:
     name: regression
