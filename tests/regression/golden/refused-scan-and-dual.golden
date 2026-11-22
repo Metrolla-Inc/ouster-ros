@@ -1,0 +1,5 @@
+exit 1
+--- stdout
+--- stderr
+ouster-driver: refusing to start: PUBLISH_SCAN='true' is not supported with METROLLA_DRIVER_CONTRACT; accepted: unset or false. The contract publishes PointCloud2 and IMU only
+ouster-driver: refusing to start: DUAL_LIDAR='1' is not supported with METROLLA_DRIVER_CONTRACT; accepted: unset or false. Run one container per Ouster sensor

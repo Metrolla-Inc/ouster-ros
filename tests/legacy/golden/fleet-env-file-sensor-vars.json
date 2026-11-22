@@ -1,0 +1,27 @@
+{
+  "exec": {
+    "argv": [
+      "ros2",
+      "launch",
+      "ouster_ros",
+      "driver.launch.py",
+      "sensor_hostname:=192.168.1.201",
+      "viz:=false"
+    ],
+    "env": {
+      "DATA_PORT": "7502",
+      "LIDAR_MODEL": "os1-128",
+      "ROS2_WS": "/opt/ros2_ws",
+      "ROS_DISTRO": "jazzy",
+      "ROS_LOCALHOST_ONLY": "1",
+      "SENSOR_IP": "192.168.1.201",
+      "SENSOR_PORT": "2368",
+      "SENSOR_TYPE": "ouster",
+      "SOURCED": "/opt/ros/jazzy:/opt/ros2_ws/install",
+      "USE_MACADDRESS_NS": "0"
+    }
+  },
+  "exit": 0,
+  "stderr": "",
+  "stdout": ""
+}

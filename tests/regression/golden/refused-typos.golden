@@ -1,0 +1,12 @@
+exit 1
+--- stdout
+--- stderr
+ouster-driver: refusing to start: LIDAR_MODEL is not set; accepted (any case, optional 'ouster-' prefix, '-' and '_' ignored): os0, os1, os2, osdome; or with the channel count: os0-32, os0-64, os0-128, os1-32, os1-64, os1-128, os2-32, os2-64, os2-128, osdome-32, osdome-64, osdome-128
+ouster-driver: refusing to start: SENSOR_IP is not set; accepted: the sensor's own IPv4 address, for example 192.168.1.201 (the driver configures the sensor over HTTP at that address and reads its calibration from it)
+ouster-driver: refusing to start: FRAME_TOPIC is not a variable this image knows (did you mean POINTCLOUD_TOPIC?); accepted: LIDAR_MODEL, SENSOR_IP, SENSOR_ID, DATA_PORT, DEVICE_PORT, HOST_IP, FRAME_ID, POINTCLOUD_TOPIC, TIME_MODE, PUBLISH_SCAN, OUSTER_RUN_DIR, DUAL_LIDAR
+ouster-driver: refusing to start: LIDAR_MODLE is not a variable this image knows (did you mean LIDAR_MODEL?); accepted: LIDAR_MODEL, SENSOR_IP, SENSOR_ID, DATA_PORT, DEVICE_PORT, HOST_IP, FRAME_ID, POINTCLOUD_TOPIC, TIME_MODE, PUBLISH_SCAN, OUSTER_RUN_DIR, DUAL_LIDAR
+ouster-driver: refusing to start: OUSTER_RUNDIR is not a variable this image knows (did you mean OUSTER_RUN_DIR?); accepted: LIDAR_MODEL, SENSOR_IP, SENSOR_ID, DATA_PORT, DEVICE_PORT, HOST_IP, FRAME_ID, POINTCLOUD_TOPIC, TIME_MODE, PUBLISH_SCAN, OUSTER_RUN_DIR, DUAL_LIDAR
+ouster-driver: refusing to start: POINTCLOUD_TOPICS is not a variable this image knows (did you mean POINTCLOUD_TOPIC?); accepted: LIDAR_MODEL, SENSOR_IP, SENSOR_ID, DATA_PORT, DEVICE_PORT, HOST_IP, FRAME_ID, POINTCLOUD_TOPIC, TIME_MODE, PUBLISH_SCAN, OUSTER_RUN_DIR, DUAL_LIDAR
+ouster-driver: refusing to start: SENSOR_IPP is not a variable this image knows (did you mean SENSOR_IP?); accepted: LIDAR_MODEL, SENSOR_IP, SENSOR_ID, DATA_PORT, DEVICE_PORT, HOST_IP, FRAME_ID, POINTCLOUD_TOPIC, TIME_MODE, PUBLISH_SCAN, OUSTER_RUN_DIR, DUAL_LIDAR
+ouster-driver: refusing to start: SENSOR_MODEL is not a variable this image knows (did you mean LIDAR_MODEL?); accepted: LIDAR_MODEL, SENSOR_IP, SENSOR_ID, DATA_PORT, DEVICE_PORT, HOST_IP, FRAME_ID, POINTCLOUD_TOPIC, TIME_MODE, PUBLISH_SCAN, OUSTER_RUN_DIR, DUAL_LIDAR
+ouster-driver: refusing to start: TIME_MOD is not a variable this image knows (did you mean TIME_MODE?); accepted: LIDAR_MODEL, SENSOR_IP, SENSOR_ID, DATA_PORT, DEVICE_PORT, HOST_IP, FRAME_ID, POINTCLOUD_TOPIC, TIME_MODE, PUBLISH_SCAN, OUSTER_RUN_DIR, DUAL_LIDAR

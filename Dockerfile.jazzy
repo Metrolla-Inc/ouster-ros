@@ -42,6 +42,13 @@ RUN if [ ! -d "${ROS2_WS}/src/ouster-ros/ouster-sdk" ] || [ ! -f "${ROS2_WS}/src
 RUN source /opt/ros/jazzy/setup.bash && \
     colcon build --executor sequential --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
 
+# Metrolla driver contract, opt-in (METROLLA_DRIVER_CONTRACT=1, docs/METROLLA_DRIVER_CONTRACT.md):
+# the scripts, and a build-time check that the vendor parameter file still renders and the node
+# exists. Without the switch the image runs exactly as before.
+COPY docker/contract-entrypoint.sh docker/ouster_env.py /opt/metrolla/ouster/
+RUN chmod 0755 /opt/metrolla/ouster/contract-entrypoint.sh /opt/metrolla/ouster/ouster_env.py \
+    && python3 -I /opt/metrolla/ouster/ouster_env.py selfcheck
+
 # 7. Entrypoint
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

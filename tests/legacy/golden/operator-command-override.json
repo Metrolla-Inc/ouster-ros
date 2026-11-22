@@ -1,0 +1,21 @@
+{
+  "exec": {
+    "argv": [
+      "ros2",
+      "launch",
+      "ouster_ros",
+      "driver.launch.py",
+      "sensor_hostname:=10.5.5.86",
+      "viz:=false"
+    ],
+    "env": {
+      "ROS2_WS": "/opt/ros2_ws",
+      "ROS_DISTRO": "jazzy",
+      "ROS_LOCALHOST_ONLY": "1",
+      "SOURCED": "/opt/ros/jazzy:/opt/ros2_ws/install"
+    }
+  },
+  "exit": 0,
+  "stderr": "",
+  "stdout": ""
+}

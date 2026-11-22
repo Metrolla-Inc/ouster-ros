@@ -1,0 +1,23 @@
+{
+  "exec": {
+    "argv": [
+      "ros2",
+      "launch",
+      "ouster_ros",
+      "driver.launch.py",
+      "sensor_hostname:=192.168.1.201",
+      "viz:=false"
+    ],
+    "env": {
+      "METROLLA_DRIVER_CONTRACT": "0",
+      "ROS2_WS": "/opt/ros2_ws",
+      "ROS_DISTRO": "jazzy",
+      "ROS_LOCALHOST_ONLY": "1",
+      "SOURCED": "/opt/ros/jazzy:/opt/ros2_ws/install",
+      "USE_MACADDRESS_NS": "0"
+    }
+  },
+  "exit": 0,
+  "stderr": "",
+  "stdout": ""
+}
