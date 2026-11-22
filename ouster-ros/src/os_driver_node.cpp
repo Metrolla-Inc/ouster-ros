@@ -53,6 +53,11 @@ class OusterDriver : public OusterSensor {
 
     ~OusterDriver() override {
         RCLCPP_DEBUG(get_logger(), "OusterDriver::~OusterDriver() called");
+        // Metrolla: the sensor connection thread calls this class's on_lidar_packet_msg and
+        // on_imu_packet_msg, which use this class's handlers and publishers. Stop it before they
+        // are destroyed; ~OusterSensor stopped it only afterwards, and a packet arriving in
+        // between crashed the node on SIGTERM (exit 139; tests/regression/test_past_bugs.py).
+        stop_sensor_connection_thread();
     }
 
     virtual void on_metadata_updated(const sensor::sensor_info& info) override {
