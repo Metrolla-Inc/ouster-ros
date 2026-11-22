@@ -107,3 +107,27 @@ def test_the_dockerfile_check_fails_on_v1_0_0():
 def test_ci_workflows_pin_actions():
     for path in (REPO / ".github/workflows").glob("*.yml"):
         assert check_actions_pinned(load_workflow(path.read_text())) == [], path.name
+
+
+def check_driver_stops_thread_before_its_members(source: str) -> list[str]:
+    """Bug (vendor code at v1.0.0, still in the vendor's ros2 head): ~OusterDriver destroyed its
+    packet handlers and publishers while the sensor connection thread (stopped only in
+    ~OusterSensor) kept calling them, so SIGTERM while packets arrive crashed the node (exit 139,
+    seen in the smoke test). ~OusterDriver must stop the thread first."""
+    m = re.search(r"~OusterDriver\(\)\s*override\s*\{(.*?)\n    \}", source, re.S)
+    if not m:
+        return ["no ~OusterDriver() found"]
+    return [] if "stop_sensor_connection_thread();" in m.group(1) else [
+        "~OusterDriver does not stop the sensor connection thread"]
+
+
+def test_driver_destructor_stops_the_connection_thread():
+    path = REPO / "ouster-ros/src/os_driver_node.cpp"
+    assert check_driver_stops_thread_before_its_members(path.read_text()) == []
+
+
+def test_the_destructor_check_fails_on_v1_0_0():
+    text = old("ouster-ros/src/os_driver_node.cpp")
+    if text is None:
+        pytest.skip("tag v1.0.0 not fetched")
+    assert check_driver_stops_thread_before_its_members(text) != []

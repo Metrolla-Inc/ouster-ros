@@ -280,6 +280,16 @@ sys.exit(0 if (a["udp_port_lidar"], a["udp_port_imu"], a["udp_dest"], a["timesta
 PY
 then ok "contract ptp: sensor set to TIME_FROM_PTP_1588, destination HOST_IP, ports 7600/7601"; else fail "contract ptp: sensor configuration (above)"; fi
 
+echo "== 4c. contract: SIGTERM while packets arrive, five times (past bug: exit 139)"
+start_fake stops
+for i in 1 2 3 4 5; do
+    docker run -d --name "$NAME" "${RESTRICT[@]}" -e METROLLA_DRIVER_CONTRACT=1 -e LIDAR_MODEL=os2-128 \
+        -e "SENSOR_IP=$SENSOR_IP" "$IMAGE" > /dev/null
+    sleep $((3 + i))
+    stop_and_expect_zero "stop-$i"
+done
+stop_fake
+
 if [[ $FAILED != 0 ]]; then
     for log in "$WORK"/*.driver.log; do echo "== $log"; tail -n 60 "$log"; done
     echo "SMOKE FAILED"
