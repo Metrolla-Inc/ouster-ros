@@ -1,5 +1,13 @@
 # Official ROS driver for Ouster sensors
 
+> **Metrolla fork.** This is Metrolla's fork of the vendor's driver, on vendor release
+> `jazzy-0.15.1` (ouster-ros 0.15.1, Ouster SDK 0.16.2; sensor firmware 2.4.0 or later). It adds
+> the container image `ghcr.io/metrolla-inc/ouster-ros-driver` (`Dockerfile.jazzy`) with the opt-in
+> Metrolla driver contract (`docs/METROLLA_DRIVER_CONTRACT.md`), tests (`TESTING.md`) and the
+> differences from the previous vendor base (`docs/VENDOR_DIFF.md`). Release tags are
+> `v<vendor version>-metrolla.<n>` (first: `v0.15.1-metrolla.1`); the image workflow refuses any
+> other `v*` tag. Everything below is the vendor's README.
+
 [ROS1 (melodic/noetic)](https://github.com/ouster-lidar/ouster-ros/tree/master) |
 [ROS2 (rolling/humble/iron/jazzy/kilted)](https://github.com/ouster-lidar/ouster-ros/tree/ros2) |
 [ROS2 (galactic/foxy)](https://github.com/ouster-lidar/ouster-ros/tree/ros2-foxy)

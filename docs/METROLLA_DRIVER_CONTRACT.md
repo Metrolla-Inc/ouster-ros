@@ -1,13 +1,19 @@
 # Metrolla driver contract (Ouster image)
 
 The image `ghcr.io/metrolla-inc/ouster-ros-driver` (built from `Dockerfile.jazzy` on the `ros2`
-branch) takes its settings from the environment the same way as the other Metrolla driver images
+branch; vendor base ouster-ros 0.15.1 `jazzy-0.15.1` with the Ouster SDK 0.16.2 since
+`v0.15.1-metrolla.1`, see docs/VENDOR_DIFF.md) takes its settings from the environment the same way as the other Metrolla driver images
 (Seyond, Hesai, LSLiDAR, Quanergy), and refuses a value it does not understand.
 
 The contract is **opt-in**. Without `METROLLA_DRIVER_CONTRACT` (or with it empty or `0`) the image
-behaves exactly as the released `v1.0.0` image that fleets pin: `entrypoint.sh` is the v1.0.0 file
-with one block in front of it (tests/legacy pins this byte for byte), and the image's command is
-unchanged.
+runs the released `v1.0.0` entrypoint that fleets pin: `entrypoint.sh` is the v1.0.0 file with one
+block in front of it (tests/legacy pins this byte for byte), and the image's command is unchanged.
+What the vendor's driver underneath does changed with the 0.15.1 update (firmware 2.4.0 or later,
+settings written to the sensor, per-point times): docs/VENDOR_DIFF.md. The `v1.0.0` image itself
+is never rebuilt or moved.
+
+Sensor firmware: **2.4.0 or later** (Ouster SDK 0.16 refuses older firmware before configuring
+anything; the driver logs "Please upgrade your sensor to FW 2.4 or later" and keeps retrying).
 
 ## Switch
 
@@ -35,6 +41,11 @@ unchanged.
 | `DUAL_LIDAR` | no | false values only (empty = false) | false | - (one container per sensor) |
 
 Fixed in contract mode (the rest of the vendor's `config/driver_params.yaml` is kept as it is):
+the sensor's time-sync wiring is left as the sensor has it (`multipurpose_io_mode`,
+`nmea_in_polarity`, `nmea_baud_rate`, `sync_pulse_in_polarity`, `sync_pulse_out_polarity` rendered
+empty, so the driver does not send them; the vendor's file would reset them at every start; the
+node still always writes `signal_multiplier` 1, `phase_lock_enable` false, `phase_lock_offset` 0,
+`nmea_ignore_valid_char` false and `nmea_leap_seconds` 0),
 `proc_mask: PCL|IMU|TLM` (no images, no raw packet topics, no LaserScan), `persist_config: false`
 (nothing is saved on the sensor), `attempt_reconnect: true` every 5 s (the driver keeps trying while
 the sensor is unreachable instead of sitting unconfigured), `pub_static_tf: true`
@@ -73,7 +84,7 @@ transitions that `auto_start` requests.
 ## For the product (metrolla-edge generator)
 
 ```yaml
-image: ghcr.io/metrolla-inc/ouster-ros-driver:<tag from this branch, pinned by digest>
+image: ghcr.io/metrolla-inc/ouster-ros-driver:v0.15.1-metrolla.1@sha256:<digest from the tag's workflow run>
 user: "97000:97000"
 read_only: true
 tmpfs: [/tmp]
@@ -103,18 +114,27 @@ sensor.
 
 ## Vendor code change
 
-One, in its own commit: `~OusterDriver` now stops the sensor connection thread before its packet
+One, in its own commit (kept through the 0.15.1 update, still needed there): `~OusterDriver` now stops the sensor connection thread before its packet
 handlers and publishers are destroyed (`os_driver_node.cpp`; `stop_sensor_connection_thread` moved
 to protected in `os_sensor_node.h`). Before, SIGTERM while packets arrived could crash the node
 (exit 139 in the smoke test, intermittently). The vendor's `ros2` head has the same destructor;
 worth reporting upstream. It affects legacy mode too, only at shutdown.
 
+## Release tags
+
+`v<vendor version>-metrolla.<n>`: the first from this vendor base is `v0.15.1-metrolla.1`. The
+image workflow (`.github/workflows/build-and-push.yml`) pushes only for such a tag, from the tagged
+commit, and never over an existing image tag; any other `v*` tag is refused. `v1.0.0` stays the
+fleets' image until they are repinned after a bench run with a real sensor.
+
 ## Not proven (needs hardware)
 
 Certification needs a real sensor. Proven in CI only against a fake sensor that replays a real
-OS-2-128 recording (firmware 2.3.0, from the Ouster SDK's test data) and answers the SDK's HTTP
-calls: see TESTING.md. Not proven: a real sensor's HTTP API behaviour on each firmware (2.0 TCP
-API, 2.1/2.2 variants, 3.x), `set_udp_dest_auto` on a multi-homed host, PTP and sync-pulse time
+OS-2-128 recording (recorded on firmware 2.3.0, from the Ouster SDK's test data), reports firmware
+2.5.3 or 3.1.0 to the driver and answers the SDK's HTTP calls: see TESTING.md. Not proven: the
+firmware of the fleet sensors (2.4.0 or later needed), a real sensor's HTTP API behaviour on each
+firmware (2.4, 2.5, 3.0, 3.1, 3.2), what a real sensor does with the settings written at start
+(docs/VENDOR_DIFF.md item 2), `set_udp_dest_auto` on a multi-homed host, PTP and sync-pulse time
 on a real sensor (the TAI-UTC offset), `attempt_reconnect` after a real power loss, packet loss at
 2048x10 / dual-return profiles, the OSDome, OS0 and OS1 geometry (only OS-2-128 packets are
 replayed), the factory network settings (DHCP, link-local, `os-<serial>.local`).
