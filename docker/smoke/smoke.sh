@@ -14,7 +14,8 @@
 #      contract's topic and frame, stamps, organized size, every pixel, the sensor configured
 #      with the contract's ports, time mode and destination and nothing else changed on it; clean
 #      stop on SIGTERM (exit 0). The fake sensor reports firmware 2.5.3 (the SDK's pre-3.1 HTTP
-#      API) or 3.1.0 (the staged-configuration API), and 2.3.0 for the firmware floor (5).
+#      API), 3.1.0 (the staged-configuration API) or 3.2.0 (scans with the WINDOW field), and
+#      2.3.0 for the firmware floor (5).
 set -euo pipefail
 
 IMAGE=${1:?usage: smoke.sh IMAGE [OLD_IMAGE]}
@@ -31,6 +32,7 @@ RECORDING=/repo/docker/smoke/recording/OS-2-128-U1_v2.3.0_1024x10
 # Firmware the fake sensor reports to this image's SDK (0.16 refuses firmware before 2.4.0).
 FW_OLD_API=2.5.3
 FW_NEW_API=3.1.0
+FW_WINDOW=3.2.0  # the first firmware whose scans carry the WINDOW field
 LEGACY_CMD='["ros2","launch","ouster_ros","driver.launch.py","sensor_hostname:=192.168.1.201","viz:=false"]'
 
 fail() { echo "SMOKE FAIL: $*" >&2; FAILED=1; }
@@ -166,6 +168,7 @@ legacy_run() {  # LABEL IMAGE FIRMWARE [check_cloud args]: the fleet compose (no
         ok "$label: /ouster/points in frame os_lidar from the recorded packets, every pixel ($*)"
     else
         fail "$label: cloud check failed"
+        docker logs "$NAME" 2>&1 | grep -v -E 'fake-sensor' | tail -n 40 || true
     fi
     docker stop -t 15 "$NAME" > /dev/null || true
     docker logs "$NAME" > "$WORK/$label.driver.log" 2>&1 || true
@@ -257,7 +260,12 @@ CONTRACT_ENV=(-e METROLLA_DRIVER_CONTRACT=1 -e LIDAR_MODEL=ouster-os2-128 -e "SE
 start_fake contract "$FW_NEW_API"
 docker run -d --name "$NAME" "${RESTRICT[@]}" "${CONTRACT_ENV[@]}" "$IMAGE" > /dev/null
 sleep 3
-[[ "$(docker inspect -f '{{.State.Running}}' "$NAME")" == true ]] || fail "driver not running"
+if [[ "$(docker inspect -f '{{.State.Running}}' "$NAME")" != true ]]; then
+    fail "driver not running (exit $(docker inspect -f '{{.State.ExitCode}}' "$NAME"))"
+    docker logs "$NAME" 2>&1 | tail -n 60
+    echo "SMOKE FAILED"
+    exit 1
+fi
 uid=$(docker exec "$NAME" sh -c 'stat -c %u /proc/1')
 expect "driver runs as uid $uid (97000)" test "$uid" = 97000
 comm=$(docker exec "$NAME" cat /proc/1/comm)
@@ -292,7 +300,7 @@ CONTRACT_ENV=(-e METROLLA_DRIVER_CONTRACT=1 -e LIDAR_MODEL=OS-2-128 -e "SENSOR_I
               -e "HOST_IP=$HOST_ALIAS/24" -e DATA_PORT=7600 -e TIME_MODE=ptp -e DEVICE_PORT=80
               -e POINTCLOUD_TOPIC=/lidar/ouster_points -e FRAME_ID=ouster_top -e PUBLISH_SCAN=false
               -e DUAL_LIDAR=false)
-start_fake contract-ptp "$FW_OLD_API"
+start_fake contract-ptp "$FW_WINDOW"
 docker run -d --name "$NAME" "${RESTRICT[@]}" "${CONTRACT_ENV[@]}" "$IMAGE" > /dev/null
 # The fake sensor stamps packets with UTC; with TIME_FROM_PTP_1588 the driver subtracts the
 # 37 s TAI-UTC offset (ptp_utc_tai_offset), so stamps are about 37 s behind the clock here.
