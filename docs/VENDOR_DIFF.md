@@ -33,7 +33,7 @@ Metrolla's changes, all kept (`git diff jazzy-0.15.1 HEAD`): `Dockerfile.jazzy`,
 (the v1.0.0 file plus the opt-in block), `docker-compose.yml`, `Dockerfile` edits, the
 `sensor_hostname` launch argument in `launch/driver.launch.py`, `libopencv-dev` in `package.xml`,
 the contract (`docker/`), tests, workflows (`build-and-push.yml`, `ci.yml`; the vendor's
-`docker-image.yml` and PR template stay removed), docs, and the one vendor code change below.
+`docker-image.yml` and PR template stay removed), docs, and the vendor code changes below.
 
 Adaptations made for 0.15.1 in this change:
 
@@ -44,7 +44,24 @@ Adaptations made for 0.15.1 in this change:
 - The contract leaves the sensor's time-sync wiring alone (below, item 2).
 - The fake sensor speaks both HTTP APIs SDK 0.16 uses and reports a firmware version per run.
 
-**The vendor code change** (`~OusterDriver` stops the sensor connection thread before the node's
+**Vendor code changes: two, each in its own commit.**
+
+1. **New with this update: firmware before 3.2 crashed 0.15.1 on its first scan.** The point
+   types' field tables (`sensor_point_types.h`) read the `WINDOW` field for the
+   `RNG19_RFL8_SIG16_NIR16` (the default single-return profile), `RNG19_RFL8_SIG16_NIR16_DUAL`,
+   `RNG15_RFL8_NIR8_DUAL` and `RNG15_RFL8_WIN8` profiles, but SDK 0.16 leaves `WINDOW` out of a
+   `LidarScan` for firmware before 3.2 (`get_field_types`: "remove WINDOW if FW is < 3.2").
+   `LidarScan::field()` threw in the scan processing thread and the process aborted: no point
+   cloud in legacy mode (the launch process stays up, the node is gone after a few IMU messages),
+   and the container exits in contract mode. Found by this change's first CI smoke run (fake
+   sensor on 2.5.3 and 3.1.0); reproduced locally with the SDK built from this tree ("Field
+   'WINDOW' not found in LidarScan" on 2.5.3 and 3.1.0, present on 3.2.0). Fix
+   (`lidar_packet_handler.h`): a scan without `WINDOW` gets an empty one (there is no window data
+   before FW 3.2), the way the vendor already adds its RGB fields to the same scans. Not fixed in
+   the vendor's `ros2` head (`bbe9a89`) either; worth reporting upstream. Proof: past-bug test
+   (source check, fails on the vendor's file) and the smoke runs on 2.5.3 and 3.1.0 (no WINDOW)
+   and 3.2.0 (WINDOW from the packets).
+2. **Kept from #3** (`~OusterDriver` stops the sensor connection thread before the node's
 handlers and publishers are destroyed; `stop_sensor_connection_thread` protected) is **still
 needed**: 0.15.1's `~OusterDriver` is unchanged and `~OusterSensor` still stops the thread only
 after the derived members are gone. It merged without conflict; the past-bug test still checks it
@@ -136,7 +153,9 @@ rebuilt or moved.
 11. **Removed launch files**: `sensor.independent.launch.py` and `.xml`. Nothing uses them (the
     image runs `driver.launch.py`; the repo's `docker-compose.yml` names `sensor.launch.xml`,
     which still exists).
-12. **Build**: SDK built from the in-tree copy with `libzip-dev`, `libssl-dev`, `pkg-config`; the
+12. **Crash on firmware before 3.2** (vendor 0.15.1 with SDK 0.16; fixed here, above). Without the
+    fix every sensor on firmware 2.4-3.1 with the default RNG19 profile would publish no cloud.
+13. **Build**: SDK built from the in-tree copy with `libzip-dev`, `libssl-dev`, `pkg-config`; the
     `cv_bridge` CMake workaround dropped (above). Proof: the image build in CI (amd64 and arm64).
 
 ## Goldens

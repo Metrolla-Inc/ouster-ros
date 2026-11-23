@@ -112,9 +112,12 @@ at uid 97000). The smoke test runs its subscriber as 97000.
 Host firewall: allow UDP `DATA_PORT` and `DATA_PORT + 1` in from the sensor, TCP 80 out to the
 sensor.
 
-## Vendor code change
+## Vendor code changes
 
-One, in its own commit (kept through the 0.15.1 update, still needed there): `~OusterDriver` now stops the sensor connection thread before its packet
+Two, each in its own commit. First (added with the 0.15.1 update): scans from a sensor on
+firmware before 3.2 get an empty `WINDOW` field, which the vendor's point tables read and SDK 0.16
+leaves out; without it 0.15.1 aborts on the first scan (docs/VENDOR_DIFF.md). Second (kept through
+the 0.15.1 update, still needed there): `~OusterDriver` now stops the sensor connection thread before its packet
 handlers and publishers are destroyed (`os_driver_node.cpp`; `stop_sensor_connection_thread` moved
 to protected in `os_sensor_node.h`). Before, SIGTERM while packets arrived could crash the node
 (exit 139 in the smoke test, intermittently). The vendor's `ros2` head has the same destructor;
