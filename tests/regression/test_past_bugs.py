@@ -82,18 +82,19 @@ def test_the_checks_fail_on_the_v1_0_0_workflow(check):
 
 
 def check_sdk_never_fetched_from_a_branch(dockerfile: str) -> list[str]:
-    """Bug (v1.0.0 Dockerfile.jazzy): without the submodule the build cloned the SDK's moving
+    """Bug (v1.0.0 Dockerfile.jazzy): without the SDK submodule the build cloned the SDK's moving
     default branch (ouster_example) and built that, an SDK version nobody tested with this
-    driver. Now the build stops."""
+    driver. Now the build stops when ouster-ros/ouster-sdk is missing (since vendor release
+    0.15.1 the vendor keeps the SDK in-tree there)."""
     problems = []
     if re.search(r"git clone", dockerfile):
         problems.append("Dockerfile clones a repository during the build")
     if "ouster-sdk/CMakeLists.txt" not in dockerfile or "exit 1" not in dockerfile:
-        problems.append("no check that the SDK submodule is present")
+        problems.append("no check that the SDK (ouster-ros/ouster-sdk) is present")
     return problems
 
 
-def test_dockerfile_refuses_to_build_without_the_submodule():
+def test_dockerfile_refuses_to_build_without_the_sdk():
     assert check_sdk_never_fetched_from_a_branch((REPO / "Dockerfile.jazzy").read_text()) == []
 
 
