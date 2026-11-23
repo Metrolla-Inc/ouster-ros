@@ -110,6 +110,18 @@ class LidarPacketHandler {
             // (w, h, UDPProfileLidar, cols_per_packet) overload) so that the
             // RGB profile's RGB channel is created as a 3D (h x w x 3) field.
             lidar_scans[i] = std::make_unique<ouster::sdk::core::LidarScan>(info);
+            // Metrolla: the point types' field tables (sensor_point_types.h) read WINDOW for the
+            // RNG19 and RNG15 profiles, but the SDK leaves WINDOW out of the scan for firmware
+            // before 3.2 (get_field_types). LidarScan::field() then throws in the scan
+            // processing thread and the node aborts on its first scan. Give such scans an empty
+            // WINDOW field (no window data before FW 3.2); tests/regression/test_past_bugs.py.
+            if (!lidar_scans[i]->has_field(ChanField::WINDOW)) {
+                lidar_scans[i]->add_field(
+                    ChanField::WINDOW,
+                    ouster::sdk::core::fd_array<uint8_t>(
+                        info.format.pixels_per_column,
+                        info.format.columns_per_frame));
+            }
             mutexes[i] = std::make_unique<std::mutex>();
         }
 
