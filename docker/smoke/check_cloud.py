@@ -2,11 +2,17 @@
 """Smoke check, run inside the driver image: subscribe to a PointCloud2 topic and check what the
 driver published from the fake sensor's recorded packets (fake_sensor.py).
 
+With --imu-topic, sensor_msgs/Imu too: frame, stamps, and every message's acceleration (m/s^2)
+and angular velocity (rad/s) equal to one of the recorded IMU packets' (g and deg/s converted).
+
 For each cloud: frame id, organized size (pixels_per_column x columns_per_frame of the recording),
 stamp within --stamp-window seconds of this machine's clock and increasing. For the first cloud,
 pixel by pixel against the recording: the range, reflectivity, signal (intensity) and near-IR
 (ambient) fields equal the recorded packets' values after destaggering, ring is the row, and the
-point's distance from the origin matches its range (within the beam-origin offset).
+point's distance from the origin matches its range (within the beam-origin offset). The per-point
+time ``t`` is counted against both rules (ouster_packets.point_times): the time of the column
+the point was measured in (ouster-ros 0.14+) and the time of its output column (the v1.0.0 base);
+with --check-t every point must follow the first.
 
 Prints a JSON report; exit 0 when every check passed, 1 otherwise.
 """
@@ -47,7 +53,7 @@ def decode(msg, names: list[str]) -> dict[str, list]:
     return out
 
 
-def compare(msg, rec: op.Recording) -> dict:
+def compare(msg, rec: op.Recording, check_t: bool = False) -> dict:
     h, w = rec.height, rec.width
     stag = op.staggered_image(rec)
     vals = decode(msg, ["x", "y", "z", "range", "reflectivity", "intensity", "ambient", "ring"])
@@ -73,6 +79,14 @@ def compare(msg, rec: op.Recording) -> dict:
                                     if a == float(b) or abs(a - b) < 0.5)
     report["ambient_equal"] = sum(1 for a, b in zip(flat("near_ir"), vals["ambient"]) if a == b)
     report["ring_is_row"] = sum(1 for i, r in enumerate(vals["ring"]) if r == i // w)
+    if "t" in {f.name for f in msg.fields}:
+        t = decode(msg, ["t"])["t"]
+        report["t_measured_column"] = sum(1 for a, b in zip(op.point_times(rec, sign or 1), t)
+                                          if a == b)
+        report["t_output_column"] = sum(1 for a, b in zip(op.point_times(rec, sign or 1, False), t)
+                                        if a == b)
+    elif check_t:
+        raise ValueError("cloud has no field 't'")
     worst = 0.0
     checked = 0
     for i, r in enumerate(vals["range"]):
@@ -92,6 +106,9 @@ def compare(msg, rec: op.Recording) -> dict:
                 "ring_is_row"):
         if report[key] != n:
             report["problems"].append(f"{key}: {report[key]} of {n} pixels")
+    if check_t and report.get("t_measured_column") != n:
+        report["problems"].append(f"t: {report.get('t_measured_column')} of {n} points carry the "
+                                  "time of the column they were measured in")
     if sign == 0:
         report["problems"].append("the cloud is in the sensor's column order, not destaggered "
                                   "(the driver's destagger parameter is true)")
@@ -100,6 +117,36 @@ def compare(msg, rec: op.Recording) -> dict:
     if not checked or worst > beam_offset + 1.0:
         report["problems"].append(f"distance vs range: worst {worst:.3f} mm over {checked} points "
                                   f"(allowed {beam_offset + 1.0:.3f} mm)")
+    return report
+
+
+def imu_expected(rec: op.Recording) -> list[tuple[float, ...]]:
+    """(ax, ay, az, wx, wy, wz) of each recorded IMU packet in the units sensor_msgs/Imu uses."""
+    return [tuple(v * op.STANDARD_G for v in op.imu_reading(p)[:3])
+            + tuple(math.radians(v) for v in op.imu_reading(p)[3:]) for p in rec.imu]
+
+
+def check_imu(msgs: list[tuple[float, object]], rec: op.Recording, frame: str,
+              stamp_window: float) -> dict:
+    """Each IMU message: frame, stamp near its receive time, and acceleration and angular
+    velocity equal to one of the recorded packets' (float32 precision)."""
+    expected = imu_expected(rec)
+    report = {"messages": len(msgs), "matched": 0, "problems": []}
+    for received, m in msgs:
+        got = (m.linear_acceleration.x, m.linear_acceleration.y, m.linear_acceleration.z,
+               m.angular_velocity.x, m.angular_velocity.y, m.angular_velocity.z)
+        if any(all(abs(a - b) <= 1e-5 * max(1.0, abs(b)) for a, b in zip(got, e))
+               for e in expected):
+            report["matched"] += 1
+        else:
+            report["problems"].append(f"imu values {got} are none of the recorded packets'")
+        if m.header.frame_id != frame:
+            report["problems"].append(f"imu frame_id {m.header.frame_id!r}, expected {frame!r}")
+        stamp = m.header.stamp.sec + m.header.stamp.nanosec * 1e-9
+        if abs(stamp - received) > stamp_window:
+            report["problems"].append(f"imu stamp {stamp:.3f} is {stamp - received:+.3f} s from "
+                                      "the receive time")
+    report["problems"] = report["problems"][:10]
     return report
 
 
@@ -112,11 +159,16 @@ def main() -> int:
     ap.add_argument("--stamp-window", type=float, default=5.0)
     ap.add_argument("--recording", default=str(op.RECORDING))
     ap.add_argument("--no-pixels", action="store_true", help="skip the pixel comparison")
+    ap.add_argument("--check-t", action="store_true",
+                    help="every point's t must be its measured column's time (ouster-ros 0.14+)")
+    ap.add_argument("--imu-topic", default="", help="also check sensor_msgs/Imu on this topic")
+    ap.add_argument("--imu-frame", default="os_imu")
+    ap.add_argument("--imus", type=int, default=5)
     args = ap.parse_args()
 
     import rclpy
     from rclpy.qos import qos_profile_sensor_data
-    from sensor_msgs.msg import PointCloud2
+    from sensor_msgs.msg import Imu, PointCloud2
 
     rec = op.load(Path(args.recording))
     rclpy.init()
@@ -124,8 +176,13 @@ def main() -> int:
     got: list[tuple[float, object]] = []
     node.create_subscription(PointCloud2, args.topic, lambda m: got.append((time.time(), m)),
                              qos_profile_sensor_data)
+    imus: list[tuple[float, object]] = []
+    if args.imu_topic:
+        node.create_subscription(Imu, args.imu_topic, lambda m: imus.append((time.time(), m)),
+                                 qos_profile_sensor_data)
     deadline = time.monotonic() + args.timeout
-    while len(got) < args.clouds and time.monotonic() < deadline:
+    while (len(got) < args.clouds or (args.imu_topic and len(imus) < args.imus)) \
+            and time.monotonic() < deadline:
         rclpy.spin_once(node, timeout_sec=0.2)
     node.destroy_node()
     rclpy.shutdown()
@@ -155,11 +212,18 @@ def main() -> int:
     report["cloud_list"] = clouds
     if got and not args.no_pixels:
         try:
-            pixels = compare(got[0][1], rec)
+            pixels = compare(got[0][1], rec, args.check_t)
         except ValueError as exc:
             pixels = {"problems": [str(exc)]}
         report["pixels"] = pixels
         report["problems"] += [f"pixels: {p}" for p in pixels["problems"]]
+    if args.imu_topic:
+        imu = check_imu(imus, rec, args.imu_frame, args.stamp_window)
+        imu["topic"] = args.imu_topic
+        if len(imus) < args.imus:
+            imu["problems"].append(f"received {len(imus)} of {args.imus} IMU messages")
+        report["imu"] = imu
+        report["problems"] += [f"imu: {p}" for p in imu["problems"]]
     print(json.dumps(report, indent=2))
     return 1 if report["problems"] else 0
 
