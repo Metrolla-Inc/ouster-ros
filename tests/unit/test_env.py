@@ -220,6 +220,23 @@ def test_contract_settings_are_the_documented_ones():
     assert p["metadata"] == '"/tmp/ouster/metadata.json"'
 
 
+def test_time_sync_wiring_is_left_to_the_sensor():
+    """Vendor 0.15 writes multipurpose IO, NMEA and sync-pulse settings to the sensor at every
+    start; the contract renders them empty, which the node does not send
+    (os_sensor_node.cpp, is_arg_set), so the sensor keeps its own."""
+    p = params(render(BASE))
+    vendor = params(VENDOR_PARAMS.read_text())
+    assert oe.SENSOR_OWN_SETTINGS == ("multipurpose_io_mode", "nmea_in_polarity", "nmea_baud_rate",
+                                      "sync_pulse_in_polarity", "sync_pulse_out_polarity")
+    for key in oe.SENSOR_OWN_SETTINGS:
+        assert vendor[key] not in ('""', "''"), key  # the vendor file sets a value
+        assert p[key] == '""', key
+    # Numeric ones the node sends only when >= 0 stay at the vendor's -1 (not sent).
+    for key in ("sync_pulse_out_frequency", "sync_pulse_out_angle", "sync_pulse_out_pulse_width",
+                "min_distance", "lidar_frame_azimuth_offset"):
+        assert p[key] == vendor[key] == "-1", key
+
+
 def test_render_refuses_a_vendor_file_without_a_key():
     source = VENDOR_PARAMS.read_text().replace("    imu_port: 0\n", "")
     with pytest.raises(oe.BrokenImage, match="imu_port"):
