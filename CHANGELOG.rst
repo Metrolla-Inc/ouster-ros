@@ -4,6 +4,10 @@ Changelog
 
 [unreleased]
 ============
+* [Metrolla] Add ``sensor-tool`` to the driver image (``/usr/local/bin/sensor-tool``, ``docker/sensor_tool.py``):
+  reads an Ouster sensor's address, data destination and clock source over its HTTP API and sets them
+  (``probe``, ``get-net``, ``set-net``, ``set-dest``, ``set-ptp``). Tested against a fake sensor only; see
+  ``docs/sensor-tool.md``.
 * [BUGFIX]: correctly align timestamps to the generated point cloud.
 * [BUGFIX]: NEAR_IR data is not populated with data for organized point clouds that have no range.
 * Add support to enable **loop** for pcap replay + other replay config.
