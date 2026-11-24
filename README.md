@@ -1,5 +1,13 @@
 # Official ROS driver for Ouster sensors
 
+> **Metrolla fork.** This is Metrolla's fork of the vendor's driver, on vendor release
+> `jazzy-0.15.1` (ouster-ros 0.15.1, Ouster SDK 0.16.2; sensor firmware 2.4.0 or later). It adds
+> the container image `ghcr.io/metrolla-inc/ouster-ros-driver` (`Dockerfile.jazzy`) with the opt-in
+> Metrolla driver contract (`docs/METROLLA_DRIVER_CONTRACT.md`), tests (`TESTING.md`) and the
+> differences from the previous vendor base (`docs/VENDOR_DIFF.md`). Release tags are
+> `v<vendor version>-metrolla.<n>` (first: `v0.15.1-metrolla.1`); the image workflow refuses any
+> other `v*` tag. Everything below is the vendor's README.
+
 [ROS1 (melodic/noetic)](https://github.com/ouster-lidar/ouster-ros/tree/master) |
 [ROS2 (rolling/humble/iron/jazzy/kilted)](https://github.com/ouster-lidar/ouster-ros/tree/ros2) |
 [ROS2 (galactic/foxy)](https://github.com/ouster-lidar/ouster-ros/tree/ros2-foxy)
@@ -20,6 +28,8 @@
     - [Windows](#windows)
     - [Mac](#mac)
   - [Getting Started](#getting-started)
+    - [Installation via apt (Recommended)](#installation-via-apt-recommended)
+    - [Building from Source](#building-from-source)
   - [Usage](#usage)
     - [Launching Nodes](#launching-nodes)
       - [Sensor Mode](#sensor-mode)
@@ -110,6 +120,25 @@ TBD
 
 
 ## Getting Started
+
+### Installation via apt (Recommended)
+The simplest way to install the driver is directly from the ROS package index using `apt`:
+
+```bash
+sudo apt install ros-${ROS_DISTRO}-ouster-ros
+```
+
+where `${ROS_DISTRO}` is one of ``rolling``, ``humble``, ``iron``, ``jazzy`` or ``kilted``.
+
+> **Note**
+> There may be a delay of a few weeks between a new release on the
+> [ros2 branch](https://github.com/ouster-lidar/ouster-ros/tree/ros2) and its availability
+> in the ROS package index. If you need the latest features or bug fixes, consider building
+> from source as described below.
+
+
+### Building from Source
+If you need the latest features or wish to contribute to the driver, you can build it from source.
 To build the driver using ROS2 you need to clone the project into the `src` folder of a ros2
 workspace as shown below:
 
@@ -174,6 +203,12 @@ ros2 launch ouster_ros driver.launch.py    \
 If you don't pass a `params_file` then the file located at `ouster/config/driver_params.yaml` will be used. Note that in
 the params you can start with default options for everything except the `sensor_hostname` param which you should adjust
 to match the hostname or ip address of the Ouster sensor you are trying to connect to.
+
+> **Note**:
+> If you observe parts of the scan missing is missing, this suggests having a lots of dropped packets
+> It is recommended that you increase the maximum allowed size for receive memory buffers in network
+> subsystem and tune packet fragmentation settings, you can do so by running the script `network-configure.bash` found
+> under `util`.
 
 **comptability mode**
 If you are migrating from https://github.com/ros-drivers/ros2_ouster_drivers to the official ouster drivers

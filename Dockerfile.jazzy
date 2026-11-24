@@ -19,6 +19,9 @@ RUN apt-get update && apt-get install -y \
     libcurl4-openssl-dev \
     libpcap-dev \
     libtins-dev \
+    libzip-dev \
+    libssl-dev \
+    pkg-config \
     git \
     cmake \
     python3-colcon-common-extensions \
@@ -31,11 +34,12 @@ COPY . ${ROS2_WS}/src/
 # Set the shell to bash so we can use 'source'
 SHELL ["/bin/bash", "-c"]
 
-# 5. The Ouster SDK is the ouster-ros/ouster-sdk submodule (pinned commit). Refuse to build without
-#    it: this step used to clone the SDK's moving default branch instead, which builds a different,
-#    untested SDK (tests/regression/test_past_bugs.py).
+# 5. The Ouster SDK is the vendor's in-tree copy, ouster-ros/ouster-sdk (SDK 0.16.2 in ouster-ros
+#    0.15.1; libzip-dev, libssl-dev and pkg-config above are its build dependencies). Refuse to
+#    build without it: this step used to clone the SDK's moving default branch instead, which
+#    builds a different, untested SDK (tests/regression/test_past_bugs.py).
 RUN if [ ! -f "${ROS2_WS}/src/ouster-ros/ouster-sdk/CMakeLists.txt" ]; then \
-        echo "OusterSDK submodule missing: check out with 'git submodule update --init --recursive'" >&2; \
+        echo "Ouster SDK missing from ouster-ros/ouster-sdk (the vendor keeps it in-tree)" >&2; \
         exit 1; \
     fi
 

@@ -509,6 +509,12 @@ def yaml_scalar(value: object) -> str:
     raise TypeError(f"cannot render {value!r}")
 
 
+# Sensor settings the vendor's driver_params.yaml sets and the contract leaves to the sensor:
+# string parameters the node only sends when non-empty (os_sensor_node.cpp, is_arg_set).
+SENSOR_OWN_SETTINGS = ("multipurpose_io_mode", "nmea_in_polarity", "nmea_baud_rate",
+                       "sync_pulse_in_polarity", "sync_pulse_out_polarity")
+
+
 def contract_params(s: Settings) -> dict[str, object]:
     host = s.host_ip.partition("/")[0] if s.host_ip else ""
     return {
@@ -531,6 +537,10 @@ def contract_params(s: Settings) -> dict[str, object]:
         # unconfigured; the retries are logged.
         "attempt_reconnect": True,
         "dormant_period_between_reconnects": 5.0,
+        # Time-sync wiring stays as the sensor has it (set on its web page by whoever wired the
+        # sync pulse or NMEA input). The vendor file (0.15) sets these, so every start would
+        # write them to the sensor; the node sends nothing for an empty value.
+        **{key: "" for key in SENSOR_OWN_SETTINGS},
     }
 
 

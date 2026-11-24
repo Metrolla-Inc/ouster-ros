@@ -1,8 +1,8 @@
 """Recorded Ouster packets for the smoke test: read them, turn them into what a sensor would send,
 and say what the driver must publish from them.
 
-The recording is the Ouster SDK's own test data, in this repository's SDK submodule:
-ouster-ros/ouster-sdk/tests/pcaps/OS-2-128-U1_v2.3.0_1024x10.{pcap,json} - one full frame (64 lidar
+The recording is the Ouster SDK's own test data (SDK Release-0.11.1, tests/pcaps), kept in
+docker/smoke/recording/OS-2-128-U1_v2.3.0_1024x10.{pcap,json} - one full frame (64 lidar
 packets of 16 columns, 1024x10, profile RNG19_RFL8_SIG16_NIR16) and 10 IMU packets from a real
 OS-2-128 on firmware 2.3.0, with the sensor's metadata in the legacy (flat) JSON format.
 
@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-RECORDING = REPO / "ouster-ros/ouster-sdk/tests/pcaps/OS-2-128-U1_v2.3.0_1024x10"
+RECORDING = REPO / "docker/smoke/recording/OS-2-128-U1_v2.3.0_1024x10"
 # Pinned: the smoke test's expectations are computed from exactly these bytes.
 RECORDING_SHA256 = {
     ".pcap": "66ef581f62f7cec8d8067efff38f46687672c6b39cdaa65095e795268d3362b5",
@@ -33,6 +33,7 @@ PACKET_HEADER = 32
 PACKET_FOOTER = 32
 COLUMN_HEADER = 12
 PIXEL_BYTES = 12
+STANDARD_G = 9.80665  # m/s^2 per g: the SDK's conversion of legacy IMU acceleration
 LIDAR_PORT = 7502  # the recording's destination ports
 IMU_PORT = 7503
 
@@ -102,9 +103,13 @@ def load(base: Path = RECORDING) -> Recording:
 
 
 def nested_metadata(rec: Recording, udp_dest: str = "", lidar_port: int = 7502,
-                    imu_port: int = 7503, timestamp_mode: str = "TIME_FROM_INTERNAL_OSC") -> dict:
-    """The recording's metadata in the format a sensor's api/v1/sensor/metadata returns."""
-    m = rec.meta
+                    imu_port: int = 7503, timestamp_mode: str = "TIME_FROM_INTERNAL_OSC",
+                    firmware: str | None = None) -> dict:
+    """The recording's metadata in the format a sensor's api/v1/sensor/metadata returns;
+    ``firmware`` (for example "2.5.3") replaces the recording's 2.3.0 in image_rev."""
+    m = dict(rec.meta)
+    if firmware:
+        m["image_rev"] = with_firmware(m["image_rev"], firmware)
     fmt = dict(m["data_format"])
     return {
         "sensor_info": {
@@ -168,12 +173,57 @@ def restamp_lidar(rec: Recording, packet: bytes, new_frame_id: int, base_ns: int
     return bytes(out)
 
 
+def imu_reading(packet: bytes) -> tuple[float, ...]:
+    """A legacy IMU packet's acceleration (g) and angular velocity (deg/s), x y z each (float32
+    at bytes 24-48, after the three 8-byte timestamps)."""
+    return struct.unpack_from("<6f", packet, 24)
+
+
 def restamp_imu(packet: bytes, base_ns: int, first_ts: int) -> bytes:
     out = bytearray(packet)
     for off in (0, 8, 16):
         ts = struct.unpack_from("<Q", packet, off)[0]
         struct.pack_into("<Q", out, off, base_ns + max(0, ts - first_ts))
     return bytes(out)
+
+
+def column_timestamps(rec: Recording) -> list[int]:
+    """The recorded timestamp of each column, indexed by measurement id."""
+    ts = [0] * rec.width
+    for p in rec.lidar:
+        for off in column_offsets(rec):
+            mid = struct.unpack_from("<H", p, off + 8)[0]
+            if mid < rec.width:
+                ts[mid] = struct.unpack_from("<Q", p, off)[0]
+    return ts
+
+
+def point_times(rec: Recording, sign: int, measured_column: bool = True) -> list[int]:
+    """The per-point ``t`` (ns since the scan's first column) the driver must publish for an
+    organized cloud destaggered with ``sign`` (row-major, height x width).
+
+    measured_column=True: the time of the column the point was measured in, (v - sign *
+    shift[u]) mod width - what ouster-ros 0.14+ publishes. False: the time of output column v,
+    whatever column the point came from - what the fork's v1.0.0 base (ouster-ros 0.13) published.
+    The fake sensor moves every timestamp by the same amount, so these differences are as recorded.
+    """
+    ts = column_timestamps(rec)
+    w = rec.width
+    out = []
+    for u in range(rec.height):
+        for v in range(w):
+            col = (v - sign * rec.shifts[u]) % w if measured_column else v
+            out.append(max(0, ts[col] - ts[0]))
+    return out
+
+
+def with_firmware(image_rev: str, version: str) -> str:
+    """image_rev with its firmware version replaced ("...-v2.3.0+..." -> "...-v2.5.3+...")."""
+    head, sep, tail = image_rev.partition("-v")
+    if not sep:
+        raise ValueError(f"no version in {image_rev!r}")
+    rest = tail.split("+", 1)
+    return head + "-v" + version + ("+" + rest[1] if len(rest) == 2 else "")
 
 
 def first_timestamp(rec: Recording) -> int:

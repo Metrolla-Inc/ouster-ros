@@ -82,18 +82,19 @@ def test_the_checks_fail_on_the_v1_0_0_workflow(check):
 
 
 def check_sdk_never_fetched_from_a_branch(dockerfile: str) -> list[str]:
-    """Bug (v1.0.0 Dockerfile.jazzy): without the submodule the build cloned the SDK's moving
+    """Bug (v1.0.0 Dockerfile.jazzy): without the SDK submodule the build cloned the SDK's moving
     default branch (ouster_example) and built that, an SDK version nobody tested with this
-    driver. Now the build stops."""
+    driver. Now the build stops when ouster-ros/ouster-sdk is missing (since vendor release
+    0.15.1 the vendor keeps the SDK in-tree there)."""
     problems = []
     if re.search(r"git clone", dockerfile):
         problems.append("Dockerfile clones a repository during the build")
     if "ouster-sdk/CMakeLists.txt" not in dockerfile or "exit 1" not in dockerfile:
-        problems.append("no check that the SDK submodule is present")
+        problems.append("no check that the SDK (ouster-ros/ouster-sdk) is present")
     return problems
 
 
-def test_dockerfile_refuses_to_build_without_the_submodule():
+def test_dockerfile_refuses_to_build_without_the_sdk():
     assert check_sdk_never_fetched_from_a_branch((REPO / "Dockerfile.jazzy").read_text()) == []
 
 
@@ -131,3 +132,39 @@ def test_the_destructor_check_fails_on_v1_0_0():
     if text is None:
         pytest.skip("tag v1.0.0 not fetched")
     assert check_driver_stops_thread_before_its_members(text) != []
+
+
+def check_scans_have_the_window_field(source: str) -> list[str]:
+    """Bug (vendor ouster-ros 0.15.1, found by the smoke test of the jazzy-0.15.1 update): the
+    point types' field tables read the WINDOW field for the RNG19/RNG15 profiles, but Ouster SDK
+    0.16 leaves WINDOW out of a LidarScan for sensor firmware before 3.2, so LidarScan::field()
+    threw in the scan processing thread and the node aborted on its first scan (no point cloud;
+    in contract mode the container exited). LidarPacketHandler must give such scans the field."""
+    m = re.search(r"lidar_scans\[i\] = std::make_unique<ouster::sdk::core::LidarScan>\(info\);"
+                  r"(.*?)mutexes\[i\]", source, re.S)
+    if not m:
+        return ["no LidarScan construction found in LidarPacketHandler"]
+    body = re.sub(r"//[^\n]*", "", m.group(1))
+    if "has_field(ChanField::WINDOW)" not in body or "add_field(" not in body:
+        return ["LidarPacketHandler does not add a missing WINDOW field"]
+    return []
+
+
+def test_scans_get_a_window_field_before_firmware_3_2():
+    path = REPO / "ouster-ros/src/lidar_packet_handler.h"
+    assert check_scans_have_the_window_field(path.read_text()) == []
+
+
+def test_the_window_check_fails_on_the_vendor_0_15_1_code():
+    """The vendor's jazzy-0.15.1 file is the current one without the Metrolla block."""
+    text = (REPO / "ouster-ros/src/lidar_packet_handler.h").read_text()
+    vendor = re.sub(r"\n\s*// Metrolla: the point types' field tables.*?\n            \}\n", "\n",
+                    text, flags=re.S)
+    assert vendor != text
+    assert check_scans_have_the_window_field(vendor) != []
+
+
+def test_point_tables_still_read_window():
+    """If the vendor stops reading WINDOW in the point tables, the fix above can go."""
+    tables = (REPO / "ouster-ros/include/ouster_ros/sensor_point_types.h").read_text()
+    assert "{ChanField::WINDOW, ChanFieldType::UINT8}" in tables
