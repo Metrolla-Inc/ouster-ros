@@ -35,7 +35,7 @@ jobs:
       - name: Install test tools
         run: python -m pip install pytest==9.0.1 pyyaml==6.0.3 shellcheck-py==0.11.0.1
 
-      - name: Env contract, fake sensor, cloud check, legacy entrypoint (pytest)
+      - name: Env contract, fake sensor, cloud check, sensor-tool against the fake sensor, legacy entrypoint (pytest)
         run: python -m pytest tests/unit tests/legacy -v
 
       - name: shellcheck (new scripts; entrypoint.sh's legacy part is kept byte-identical to v1.0.0)
@@ -119,7 +119,7 @@ jobs:
           fi
           docker logout ghcr.io >/dev/null 2>&1 || true
 
-      - name: Smoke (legacy mode and contract against a fake sensor replaying recorded packets)
+      - name: Smoke (legacy mode, contract and sensor-tool against a fake sensor replaying recorded packets)
         env:
           OLD_IMAGE: ${{ steps.old.outputs.image }}
         run: docker/smoke/smoke.sh ouster-ros-driver:ci "$OLD_IMAGE"

@@ -50,6 +50,13 @@ COPY docker/contract-entrypoint.sh docker/ouster_env.py /opt/metrolla/ouster/
 RUN chmod 0755 /opt/metrolla/ouster/contract-entrypoint.sh /opt/metrolla/ouster/ouster_env.py \
     && python3 -I /opt/metrolla/ouster/ouster_env.py selfcheck
 
+# sensor-tool (docker/sensor_tool.py, docs/sensor-tool.md): reads and sets the sensor's own address,
+# destination and clock source. The host runs it as its own container, `--entrypoint sensor-tool`;
+# the driver never runs it. Standard library Python, no ROS.
+COPY docker/sensor_tool.py /usr/local/bin/sensor-tool
+RUN chmod 0755 /usr/local/bin/sensor-tool \
+    && python3 -I -c "import ast; ast.parse(open('/usr/local/bin/sensor-tool').read())"
+
 # 7. Entrypoint
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

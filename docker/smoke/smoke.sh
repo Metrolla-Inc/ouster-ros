@@ -12,6 +12,9 @@
 #      no-new-privileges, host network and IPC) against the fake sensor: PointCloud2 on the
 #      contract's topic and frame, stamps, organized size, every pixel, the sensor configured
 #      with the contract's ports, time mode and destination; clean stop on SIGTERM (exit 0).
+#   5. sensor-tool (docs/sensor-tool.md) is in the image and runs with the host's own container
+#      options: a usage error is its one JSON object, and it reads the fake sensor over HTTP
+#      without writing to it. No real sensor is contacted.
 set -euo pipefail
 
 IMAGE=${1:?usage: smoke.sh IMAGE [OLD_IMAGE]}
@@ -289,6 +292,35 @@ for i in 1 2 3 4 5; do
     stop_and_expect_zero "stop-$i"
 done
 stop_fake
+
+echo "== 5. sensor-tool is in the image and answers as the host runs it"
+# The host's own options (metrolla-edge, sensor.program).
+TOOL=(docker run --rm --network host --read-only --cap-drop ALL --security-opt no-new-privileges:true
+      --user 65534:65534 --pids-limit 64 --memory 256m --tmpfs /tmp:size=8m --entrypoint sensor-tool "$IMAGE")
+tool_out=$("${TOOL[@]}" probe) && tool_code=0 || tool_code=$?
+expect "sensor-tool exits 1 for a usage error (exit $tool_code)" test "$tool_code" = 1
+expect "sensor-tool prints one JSON object of interface 1: $tool_out" python3 -c '
+import json, sys
+answer = json.loads(sys.argv[1])
+assert (answer["sensor_tool"], answer["vendor"], answer["command"], answer["outcome"], answer["exit_code"]) == (1, "ouster", "probe", "refused", 1)
+' "$tool_out"
+start_fake tool
+tool_out=$("${TOOL[@]}" get-net --ip "$SENSOR_IP") && tool_code=0 || tool_code=$?
+expect "sensor-tool get-net reads the fake sensor without --driver-stopped (exit $tool_code)" test "$tool_code" = 0
+expect "sensor-tool get-net reports the fake sensor: $tool_out" python3 -c '
+import json, sys
+answer = json.loads(sys.argv[1])
+assert (answer["outcome"], answer["identity"]["model"], answer["after"]["net"]["ip"]) == ("reported", "OS-2-128", sys.argv[2])
+assert answer["after"]["dest"]["data_port"] == 7502 and answer["sessions"]["max_concurrent"] == 1
+' "$tool_out" "$SENSOR_IP"
+tool_out=$("${TOOL[@]}" set-dest --ip "$SENSOR_IP" --dest-ip "$HOST_ALIAS" --data-port 7600) && tool_code=0 || tool_code=$?
+expect "sensor-tool refuses a write without --driver-stopped (exit $tool_code)" test "$tool_code" = 1
+stop_fake
+expect "sensor-tool sent the fake sensor no write" python3 -c '
+import json, sys
+s = json.load(open(sys.argv[1]))
+assert s["reinits"] == 0 and s["persisted"] == 0 and not [r for r in s["requests"] if "set_config_param" in r or r.startswith("PUT")], s["requests"]
+' "$WORK/tool.fake.json"
 
 if [[ $FAILED != 0 ]]; then
     for log in "$WORK"/*.driver.log; do echo "== $log"; tail -n 60 "$log"; done
