@@ -7,6 +7,13 @@ api/v1/sensor/metadata[/<part>], api/v1/sensor/cmd/get_config_param?args=active|
 set_config_param, set_udp_dest_auto (the requester's address becomes udp_dest), reinitialize
 (staged becomes active), save_config_params. Every request is logged.
 
+Also what docker/sensor_tool.py uses beyond the SDK's calls, as Ouster's firmware manual describes
+them (as recalled; no real sensor has confirmed this fake): api/v1/system/network, PUT
+api/v1/system/network/ipv4/override (a JSON string "<address>/<prefix>"), api/v1/time/ptp and PUT
+api/v1/time/ptp/profile. The unit tests of the tool (tests/unit/test_sensor_tool.py) run this
+handler on loopback addresses and set `Sensor.address` and `Sensor.faults`; the smoke test sets
+neither, and what it gets is unchanged.
+
 UDP: once the active configuration has a udp_dest, the recorded frame (ouster_packets.py) is sent
 to udp_dest at udp_port_lidar (and the IMU packets to udp_port_imu) ten times a second, each time
 with the next frame id and the column timestamps moved to the current time (nanoseconds since
@@ -47,6 +54,23 @@ class Sensor:
         self.reinits = 0
         self.persisted = 0
         self.sent = {"lidar": 0, "imu": 0, "frames": 0}
+        # For the sensor-tool tests. `address`: the one address this sensor answers at (None: any
+        # the server listens on); a connection to another address is closed without an answer.
+        # `faults`: words that make it misbehave (see the handler). `open_now` and `max_open`
+        # count the connections open at once.
+        self.address: str | None = None
+        self.prefix = 24
+        self.override: str | None = None
+        self.mac = "bc:0f:a7:00:01:2c"
+        self.ptp_profile = "default"
+        self.faults: set[str] = set()
+        self.open_now = self.max_open = 0
+
+    def network(self) -> dict:
+        addr = f"{self.address or '192.0.2.123'}/{self.prefix}"
+        return {"carrier": True, "duplex": "full", "ethaddr": self.mac, "hostname": "os-fake",
+                "ipv4": {"addr": addr, "link_local": "169.254.245.183/16", "override": self.override},
+                "ipv6": {"link_local": "fe80::be0f:a7ff:fe00:12c/64"}, "speed": 1000}
 
     def metadata(self) -> dict:
         with self.lock:
@@ -71,12 +95,91 @@ def make_handler(sensor: Sensor):
             self.end_headers()
             self.wfile.write(data)
 
+        def setup(self):
+            super().setup()
+            with sensor.lock:
+                sensor.open_now += 1
+                sensor.max_open = max(sensor.max_open, sensor.open_now)
+
+        def finish(self):
+            with sensor.lock:
+                sensor.open_now -= 1
+            super().finish()
+
+        def elsewhere(self) -> bool:
+            """The sensor is not at the address this connection came to: no answer."""
+            if "silent" in sensor.faults or (sensor.address is not None
+                                             and self.connection.getsockname()[0] != sensor.address):
+                self.close_connection = True
+                return True
+            return False
+
+        def do_PUT(self):  # noqa: N802 (http.server API)
+            if self.elsewhere():
+                return None
+            path = self.path.lstrip("/")
+            body = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode()
+            with sensor.lock:
+                sensor.requests.append(f"PUT {self.path} {body}")
+            print(f"fake-sensor: PUT {self.path[:160]} {body[:80]}", flush=True)
+            try:
+                value = json.loads(body)
+            except ValueError:
+                value = None
+            if path == "api/v1/system/network/ipv4/override":
+                address, _, prefix = value.partition("/") if isinstance(value, str) else ("", "", "")
+                if "refuse-override" in sensor.faults or not (address and prefix.isdigit()):
+                    return self.reply(400, json.dumps({"error_code": "BadRequest", "error_msg": "invalid override"}))
+                self.reply(200, json.dumps(value))
+                with sensor.lock:
+                    if "ignore-override" not in sensor.faults:
+                        sensor.override, sensor.prefix = value, int(prefix)
+                        if sensor.address is not None:
+                            sensor.address = address
+                    if "vanish" in sensor.faults:
+                        sensor.faults.add("silent")
+                return None
+            if path == "api/v1/time/ptp/profile":
+                known = ("default", "gptp", "automotive-slave", "default-l2-relaxed")
+                if "refuse-profile" in sensor.faults or value not in known:
+                    return self.reply(400, json.dumps({"error_code": "BadRequest", "error_msg": "invalid profile"}))
+                with sensor.lock:
+                    if "ignore-profile" not in sensor.faults:
+                        sensor.ptp_profile = value
+                return self.reply(200, json.dumps(value))
+            return self.reply(404, "{}")
+
+        def do_DELETE(self):  # noqa: N802 (http.server API)
+            if self.elsewhere():
+                return None
+            with sensor.lock:
+                sensor.requests.append(f"DELETE {self.path}")
+                if self.path.lstrip("/") == "api/v1/system/network/ipv4/override":
+                    sensor.override = None
+                    return self.reply(204, "")
+            return self.reply(404, "{}")
+
         def do_GET(self):  # noqa: N802 (http.server API)
+            if self.elsewhere():
+                return None
             path, _, query = self.path.lstrip("/").partition("?")
             with sensor.lock:
                 sensor.requests.append(self.path)
             print(f"fake-sensor: GET {self.path[:160]}", flush=True)
             meta_parts = op.nested_metadata(sensor.rec)
+            if path == "api/v1/system/network":
+                if "no-network" in sensor.faults:
+                    return self.reply(404, "{}")
+                with sensor.lock:
+                    return self.reply(200, json.dumps(sensor.network()))
+            if path == "api/v1/time/ptp":
+                if "no-ptp" in sensor.faults:
+                    return self.reply(404, "{}")
+                with sensor.lock:
+                    return self.reply(200, json.dumps({
+                        "profile": sensor.ptp_profile,
+                        "port_data_set": {"port_state": "SLAVE", "log_min_delay_req_interval": 0},
+                        "time_status_np": {"gm_present": True, "master_offset": 12.0}}))
             if path == "api/v1/system/firmware":
                 return self.reply(200, json.dumps({"fw": sensor.rec.meta["image_rev"]}))
             if path == "api/v1/sensor/metadata":
@@ -106,6 +209,8 @@ def make_handler(sensor: Sensor):
                     parsed = json.loads(value)
                 except ValueError:
                     parsed = value
+                if "refuse-config" in sensor.faults:
+                    return self.reply(400, json.dumps({"error_code": "BadRequest", "error_msg": "invalid value"}))
                 with sensor.lock:
                     if key == ".":
                         if not isinstance(parsed, dict):
@@ -120,7 +225,8 @@ def make_handler(sensor: Sensor):
                 return self.reply(200, "{}")
             if path == "api/v1/sensor/cmd/reinitialize":
                 with sensor.lock:
-                    sensor.active = copy.deepcopy(sensor.staged)
+                    if "ignore-config" not in sensor.faults:
+                        sensor.active = copy.deepcopy(sensor.staged)
                     sensor.reinits += 1
                     shown = {k: sensor.active[k] for k in ("udp_dest", "udp_port_lidar",
                                                            "udp_port_imu", "timestamp_mode",
