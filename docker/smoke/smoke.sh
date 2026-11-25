@@ -167,7 +167,7 @@ legacy_run() {  # LABEL IMAGE FIRMWARE [check_cloud args]: the fleet compose (no
     start_fake "$label" "$firmware"
     env_args "$REPO/tests/legacy/cases/fleet-compose-default-cmd.env"
     docker run -d --name "$NAME" --network host --ipc host "${ENV_ARGS[@]}" "$image" > /dev/null
-    if check_cloud "$label" /ouster/points os_lidar --clouds 3 --timeout 90 "$@"; then
+    if check_cloud "$label" /ouster/points os_lidar --clouds 5 --timeout 90 "$@"; then
         ok "$label: /ouster/points in frame os_lidar from the recorded packets, every pixel ($*)"
     else
         fail "$label: cloud check failed"
@@ -193,10 +193,13 @@ if [[ -n "$OLD_IMAGE" ]]; then
     if python3 - "$WORK/legacy.check.json" "$WORK/legacy-old.check.json" <<'PY'
 import json, sys
 new, old = (json.load(open(p)) for p in sys.argv[1:3])
-# The per-point time t is expected to differ (docs/VENDOR_DIFF.md): compared separately.
+# The per-point time t is expected to differ (docs/VENDOR_DIFF.md): compared separately. The
+# first clouds may be either driver's start-up scans (check_cloud.py), so the first complete
+# cloud's pixel report is the one compared.
 T = ("t_measured_column", "t_output_column")
 print("t (new, old):", [new.get("pixels", {}).get(k) for k in T], [old.get("pixels", {}).get(k) for k in T])
-strip = lambda r: {k: v for k, v in r.items() if k not in ("cloud_list", "pixels", "imu")} | {
+strip = lambda r: {k: v for k, v in r.items()
+                   if k not in ("cloud_list", "pixels", "imu", "start_up_clouds", "later_clouds")} | {
     "pixels": {k: v for k, v in r.get("pixels", {}).items() if k not in T}} | {"shape": [
     {k: c[k] for k in ("frame_id", "width", "height", "fields")} for c in r["cloud_list"]]}
 a, b = strip(new), strip(old)
@@ -277,7 +280,7 @@ docker run --rm "${CONTRACT_ENV[@]}" "$IMAGE" check | sed '$d' > "$WORK/expected
 docker exec "$NAME" cat /tmp/ouster/driver_params.yaml > "$WORK/actual.yaml"
 expect "/tmp/ouster/driver_params.yaml in the container equals check's render" \
     diff -u "$WORK/expected.yaml" "$WORK/actual.yaml"
-if CHECK_USER=97000:97000 check_cloud contract /east/points east_os_lidar --clouds 3 --timeout 90 --check-t \
+if CHECK_USER=97000:97000 check_cloud contract /east/points east_os_lidar --clouds 5 --timeout 90 --check-t \
         --imu-topic /east/imu --imu-frame east_os_imu; then
     ok "contract: /east/points in frame east_os_lidar, host-time stamps, every pixel and point time; /east/imu in east_os_imu, every value"
 else
@@ -307,7 +310,7 @@ start_fake contract-ptp "$FW_WINDOW"
 docker run -d --name "$NAME" "${RESTRICT[@]}" "${CONTRACT_ENV[@]}" "$IMAGE" > /dev/null
 # The fake sensor stamps packets with UTC; with TIME_FROM_PTP_1588 the driver subtracts the
 # 37 s TAI-UTC offset (ptp_utc_tai_offset), so stamps are about 37 s behind the clock here.
-if CHECK_USER=97000:97000 check_cloud contract-ptp /lidar/ouster_points ouster_top --clouds 3 --timeout 90 --stamp-window 40 --check-t \
+if CHECK_USER=97000:97000 check_cloud contract-ptp /lidar/ouster_points ouster_top --clouds 5 --timeout 90 --stamp-window 40 --check-t \
         --imu-topic /ouster/imu --imu-frame os_imu; then
     ok "contract ptp: /lidar/ouster_points in frame ouster_top, every pixel and point time; /ouster/imu"
 else
