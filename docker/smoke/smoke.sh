@@ -190,10 +190,13 @@ if [[ -n "$OLD_IMAGE" ]]; then
     if python3 - "$WORK/legacy.check.json" "$WORK/legacy-old.check.json" <<'PY'
 import json, sys
 new, old = (json.load(open(p)) for p in sys.argv[1:3])
-# The per-point time t is expected to differ (docs/VENDOR_DIFF.md): compared separately.
+# The per-point time t is expected to differ (docs/VENDOR_DIFF.md): compared separately. The
+# first cloud may be either driver's start-up scan (check_cloud.py), so the complete second
+# cloud's pixel report is the one compared.
 T = ("t_measured_column", "t_output_column")
 print("t (new, old):", [new.get("pixels", {}).get(k) for k in T], [old.get("pixels", {}).get(k) for k in T])
-strip = lambda r: {k: v for k, v in r.items() if k not in ("cloud_list", "pixels", "imu")} | {
+strip = lambda r: {k: v for k, v in r.items()
+                   if k not in ("cloud_list", "pixels", "imu", "first_cloud", "later_clouds")} | {
     "pixels": {k: v for k, v in r.get("pixels", {}).items() if k not in T}} | {"shape": [
     {k: c[k] for k in ("frame_id", "width", "height", "fields")} for c in r["cloud_list"]]}
 a, b = strip(new), strip(old)

@@ -4,61 +4,11 @@ destaggering does not."""
 
 from __future__ import annotations
 
-import math
-import struct
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import check_cloud as cc
 import ouster_packets as op
-
-
-@dataclass
-class Field:
-    name: str
-    offset: int
-    datatype: int
-    count: int = 1
-
-
-@dataclass
-class Cloud:
-    width: int
-    height: int
-    point_step: int
-    data: bytes
-    fields: list = field(default_factory=list)
-    is_bigendian: bool = False
-
-
-# ouster_ros::Point ("original"): x y z (pad) intensity t reflectivity ring ambient range
-LAYOUT = [("x", 0, 7), ("y", 4, 7), ("z", 8, 7), ("intensity", 16, 7), ("t", 20, 6),
-          ("reflectivity", 24, 4), ("ring", 26, 4), ("ambient", 28, 4), ("range", 32, 6)]
-STEP = 48
-
-
-def build(rec, sign=1, tamper=None, distance_error_mm=0.0, times=None):
-    times = times or [0] * (rec.width * rec.height)
-    stag = op.staggered_image(rec)
-    img = {c: op.destagger(stag[c], rec.shifts, sign) if sign else stag[c] for c in stag}
-    h, w = rec.height, rec.width
-    alt = rec.meta["beam_altitude_angles"]
-    buf = bytearray(h * w * STEP)
-    for u in range(h):
-        for v in range(w):
-            i = u * w + v
-            r = img["range"][u][v]
-            d = (r + distance_error_mm) / 1000.0
-            az = 2 * math.pi * v / w
-            el = math.radians(alt[u])
-            xyz = (d * math.cos(el) * math.cos(az), d * math.cos(el) * math.sin(az), d * math.sin(el))
-            vals = {"x": xyz[0], "y": xyz[1], "z": xyz[2], "intensity": float(img["signal"][u][v]),
-                    "t": times[i], "reflectivity": img["reflectivity"][u][v], "ring": u,
-                    "ambient": img["near_ir"][u][v], "range": r}
-            if tamper and tamper[0] == i:
-                vals[tamper[1]] = tamper[2]
-            for name, off, dt in LAYOUT:
-                struct.pack_into("<" + cc.FIELD_FORMATS[dt], buf, i * STEP + off, vals[name])
-    return Cloud(w, h, STEP, bytes(buf), [Field(n, o, d) for n, o, d in LAYOUT])
+from clouds import build
 
 
 REC = op.load()
@@ -165,3 +115,54 @@ def test_imu_frame_and_stamp_are_checked():
     report = cc.check_imu([(1000.0, imu_msg(e, frame="east_os_imu", stamp=1010.0))], REC,
                           "os_imu", 5.0)
     assert len(report["problems"]) == 2
+
+
+# Start-up scans (check_cloud.compare allow_partial, compare_all)
+
+FIRST_PACKETS = range(0, 17 * 16)  # what a full socket buffer kept: the first 17 packets
+TIMES = op.point_times(REC, 1)
+
+
+def test_a_start_up_scan_is_accepted_only_as_the_first_cloud():
+    partial = build(REC, times=TIMES, missing=set(range(REC.width)) - set(FIRST_PACKETS))
+    report = cc.compare(partial, REC, check_t=True, allow_partial=True)
+    assert report["problems"] == [] and report["partial"] is True
+    assert report["columns_present"] == 272 and report["columns_empty"] == 752
+    assert cc.compare(partial, REC, check_t=True)["problems"]  # not accepted when strict
+
+
+def test_a_start_up_scan_with_a_wrong_pixel_in_a_present_column_fails():
+    partial = build(REC, times=TIMES, missing=range(300, 1024), tamper=(100, "reflectivity", 255))
+    report = cc.compare(partial, REC, check_t=True, allow_partial=True)
+    assert len(report["problems"]) == 1 and "neither equal" in report["problems"][0]
+
+
+def test_a_start_up_scan_with_a_wrong_time_in_a_present_column_fails():
+    times = list(TIMES)
+    times[100] += 1  # row 0, output column 100: a present measured column
+    partial = build(REC, times=times, missing=range(300, 1024))
+    assert cc.compare(partial, REC, check_t=True, allow_partial=True)["problems"]
+    assert cc.compare(partial, REC, check_t=False, allow_partial=True)["problems"] == []
+
+
+def test_a_start_up_scan_with_nothing_present_fails():
+    empty = build(REC, times=TIMES, missing=range(REC.width))
+    report = cc.compare(empty, REC, check_t=True, allow_partial=True)
+    assert any("no column equal" in p for p in report["problems"])
+
+
+def test_a_complete_first_cloud_is_not_reported_partial():
+    report = cc.compare(build(REC, times=TIMES), REC, check_t=True, allow_partial=True)
+    assert report["problems"] == [] and "partial" not in report
+
+
+def test_every_cloud_after_the_first_must_be_complete():
+    good = build(REC, times=TIMES)
+    partial = build(REC, times=TIMES, missing=range(272, 1024))
+    assert cc.compare_all([partial, good, good], REC, True)["problems"] == []
+    out = cc.compare_all([good, good, partial], REC, True)
+    assert out["problems"] and all(p.startswith("pixels (cloud 3): ") for p in out["problems"])
+    assert out["later_clouds"][0]["cloud"] == 3
+    out = cc.compare_all([good, partial, good], REC, True)
+    assert out["problems"] and all(p.startswith("pixels (cloud 2): ") for p in out["problems"])
+    assert out["pixels"]["range_equal"] < REC.width * REC.height
