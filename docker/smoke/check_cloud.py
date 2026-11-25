@@ -6,13 +6,27 @@ With --imu-topic, sensor_msgs/Imu too: frame, stamps, and every message's accele
 and angular velocity (rad/s) equal to one of the recorded IMU packets' (g and deg/s converted).
 
 For each cloud: frame id, organized size (pixels_per_column x columns_per_frame of the recording),
-stamp within --stamp-window seconds of this machine's clock and increasing. For the first cloud,
-pixel by pixel against the recording: the range, reflectivity, signal (intensity) and near-IR
-(ambient) fields equal the recorded packets' values after destaggering, ring is the row, and the
-point's distance from the origin matches its range (within the beam-origin offset). The per-point
-time ``t`` is counted against both rules (ouster_packets.point_times): the time of the column
-the point was measured in (ouster-ros 0.14+) and the time of its output column (the v1.0.0 base);
+stamp within --stamp-window seconds of this machine's clock and increasing. Every cloud, pixel by
+pixel against the recording: the range, reflectivity, signal (intensity) and near-IR (ambient)
+fields equal the recorded packets' values after destaggering, ring is the row, and the point's
+distance from the origin matches its range (within the beam-origin offset). The per-point time
+``t`` is counted against both rules (ouster_packets.point_times): the time of the column the
+point was measured in (ouster-ros 0.14+) and the time of its output column (the v1.0.0 base);
 with --check-t every point must follow the first.
+
+The first clouds received may be the driver's start-up scans. The driver opens its UDP socket
+and points the sensor at it before it starts reading, so the socket's buffer holds the first
+packets of one frame and drops the rest; after reading those it joins the live packets in the
+middle of a later frame. The vendor's default min_scan_valid_columns_ratio (0.0) publishes both
+scans with the missing columns zeroed (a real sensor gives the same partial scan when the driver
+starts mid-rotation), and the second one's point times are relative to a scan start the driver
+imputes across the frames it missed. So every cloud before the first complete one is a start-up
+scan: each measured column must equal the recording in every row (range, reflectivity, signal,
+near-IR) or be empty (all four zero in every row), with at least one column present; its t is
+counted, not required. At most MAX_START_UP such clouds. From the first complete cloud on every
+cloud must be complete and exact (t too with --check-t), and at least MIN_COMPLETE complete clouds
+must arrive. ``start_up_clouds`` lists the start-up scans' reports, ``pixels`` is the first
+complete cloud's, ``later_clouds`` the problems of the complete clouds after it.
 
 Prints a JSON report; exit 0 when every check passed, 1 otherwise.
 """
@@ -53,7 +67,10 @@ def decode(msg, names: list[str]) -> dict[str, list]:
     return out
 
 
-def compare(msg, rec: op.Recording, check_t: bool = False) -> dict:
+def compare(msg, rec: op.Recording, check_t: bool = False, allow_partial: bool = False) -> dict:
+    """Pixel comparison of one cloud with the recording. allow_partial: the cloud may be a
+    start-up scan with whole measured columns missing (all channels zero); the columns present
+    must be exact."""
     h, w = rec.height, rec.width
     stag = op.staggered_image(rec)
     vals = decode(msg, ["x", "y", "z", "range", "reflectivity", "intensity", "ambient", "ring"])
@@ -102,13 +119,21 @@ def compare(msg, rec: op.Recording, check_t: bool = False) -> dict:
     report["distance_worst_mm"] = round(worst, 3)
     beam_offset = rec.meta["lidar_origin_to_beam_origin_mm"]
     report["problems"] = []
-    for key in ("range_equal", "reflectivity_equal", "intensity_equal", "ambient_equal",
-                "ring_is_row"):
-        if report[key] != n:
-            report["problems"].append(f"{key}: {report[key]} of {n} pixels")
-    if check_t and report.get("t_measured_column") != n:
-        report["problems"].append(f"t: {report.get('t_measured_column')} of {n} points carry the "
-                                  "time of the column they were measured in")
+    complete = all(report[k] == n for k in ("range_equal", "reflectivity_equal",
+                                            "intensity_equal", "ambient_equal"))
+    t_ok = not check_t or report.get("t_measured_column") == n
+    if allow_partial and not complete:
+        report.update(partial_columns(vals, msg, rec, sign, flat, check_t))
+        report["problems"] += report.pop("partial_problems")
+    else:
+        for key in ("range_equal", "reflectivity_equal", "intensity_equal", "ambient_equal"):
+            if report[key] != n:
+                report["problems"].append(f"{key}: {report[key]} of {n} pixels")
+        if not t_ok:
+            report["problems"].append(f"t: {report.get('t_measured_column')} of {n} points carry "
+                                      "the time of the column they were measured in")
+    if report["ring_is_row"] != n:
+        report["problems"].append(f"ring_is_row: {report['ring_is_row']} of {n} pixels")
     if sign == 0:
         report["problems"].append("the cloud is in the sensor's column order, not destaggered "
                                   "(the driver's destagger parameter is true)")
@@ -118,6 +143,43 @@ def compare(msg, rec: op.Recording, check_t: bool = False) -> dict:
         report["problems"].append(f"distance vs range: worst {worst:.3f} mm over {checked} points "
                                   f"(allowed {beam_offset + 1.0:.3f} mm)")
     return report
+
+
+def partial_columns(vals: dict, msg, rec: op.Recording, sign: int, flat, check_t: bool) -> dict:
+    """A start-up scan: per measured column (the sensor's column the pixel came from), every row
+    equal to the recording in all four channels (and t with check_t: the measured column's time)
+    or every row empty (range, reflectivity, intensity and ambient all zero)."""
+    h, w = rec.height, rec.width
+    ref = {"range": flat("range"), "reflectivity": flat("reflectivity"),
+           "intensity": flat("signal"), "ambient": flat("near_ir")}
+    times = op.point_times(rec, sign or 1) if check_t else None
+    t = decode(msg, ["t"])["t"] if check_t else None
+    equal = [True] * w
+    empty = [True] * w
+    for u in range(h):
+        for v in range(w):
+            i = u * w + v
+            m = (v - sign * rec.shifts[u]) % w if sign else v
+            if (vals["range"][i] != ref["range"][i]
+                    or vals["reflectivity"][i] != ref["reflectivity"][i]
+                    or abs(vals["intensity"][i] - ref["intensity"][i]) >= 0.5
+                    or vals["ambient"][i] != ref["ambient"][i]
+                    or (check_t and t[i] != times[i])):
+                equal[m] = False
+            if (vals["range"][i] or vals["reflectivity"][i] or vals["intensity"][i]
+                    or vals["ambient"][i]):
+                empty[m] = False
+    present = sum(equal)
+    bad = [m for m in range(w) if not equal[m] and not empty[m]]
+    problems = []
+    if bad:
+        problems.append(f"start-up scan: {len(bad)} of {w} columns neither equal to the recording "
+                        f"nor empty (first: measurement id {bad[0]})")
+    if not present:
+        problems.append("start-up scan: no column equal to the recording")
+    return {"partial": True, "columns_present": present,
+            "columns_empty": sum(1 for m in range(w) if empty[m] and not equal[m]),
+            "partial_problems": problems}
 
 
 def imu_expected(rec: op.Recording) -> list[tuple[float, ...]]:
@@ -148,6 +210,44 @@ def check_imu(msgs: list[tuple[float, object]], rec: op.Recording, frame: str,
                                       "the receive time")
     report["problems"] = report["problems"][:10]
     return report
+
+
+MAX_START_UP = 3
+MIN_COMPLETE = 2
+
+
+def compare_all(msgs: list, rec: op.Recording, check_t: bool) -> dict:
+    """Pixel reports for every cloud (module docstring): start-up scans until the first complete
+    cloud, then complete clouds only."""
+    out: dict = {"problems": [], "start_up_clouds": [], "later_clouds": []}
+    complete = 0
+    for k, msg in enumerate(msgs):
+        label = f"pixels (cloud {k + 1})"
+        try:
+            if not complete:
+                # t of a start-up scan is relative to an imputed scan start: counted only
+                rep = compare(msg, rec, check_t=False, allow_partial=True)
+                if rep.get("partial"):
+                    out["start_up_clouds"].append(rep)
+                    if len(out["start_up_clouds"]) > MAX_START_UP:
+                        out["problems"].append(f"{label}: more than {MAX_START_UP} partial "
+                                               "clouds before the first complete one")
+                    out["problems"] += [f"{label}: {p}" for p in rep["problems"]]
+                    continue
+            rep = compare(msg, rec, check_t)
+        except ValueError as exc:
+            out["problems"].append(f"{label}: {exc}")
+            continue
+        complete += 1
+        if complete == 1:
+            out["pixels"] = rep
+        else:
+            out["later_clouds"].append({"cloud": k + 1, "problems": rep["problems"]})
+        out["problems"] += [f"{label}: {p}" for p in rep["problems"]]
+    if complete < MIN_COMPLETE:
+        out["problems"].append(f"{complete} complete cloud(s) after {len(out['start_up_clouds'])} "
+                               f"start-up scan(s); at least {MIN_COMPLETE} needed")
+    return out
 
 
 def main() -> int:
@@ -211,12 +311,9 @@ def main() -> int:
         last = stamp
     report["cloud_list"] = clouds
     if got and not args.no_pixels:
-        try:
-            pixels = compare(got[0][1], rec, args.check_t)
-        except ValueError as exc:
-            pixels = {"problems": [str(exc)]}
-        report["pixels"] = pixels
-        report["problems"] += [f"pixels: {p}" for p in pixels["problems"]]
+        pixels = compare_all([m for _, m in got], rec, args.check_t)
+        report["problems"] += pixels.pop("problems")
+        report.update(pixels)
     if args.imu_topic:
         imu = check_imu(imus, rec, args.imu_frame, args.stamp_window)
         imu["topic"] = args.imu_topic
