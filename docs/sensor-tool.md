@@ -65,36 +65,48 @@ profile name as `ptp.sensor_profile`, and `ptp.domain` as `null` (no call reads 
 
 ## Sources
 
-From the Ouster SDK this repository builds (the submodule `ouster-ros/ouster-sdk` at commit
-483206f, directory `ouster_client/src`); a unit test checks the cited lines still say this:
+From the Ouster SDK this repository builds (0.16.2, in the tree at `ouster-ros/ouster-sdk`;
+`sensor_http_imp.cpp`, `sensor_http.cpp` and `client.cpp` are in `ouster_sensor/src`, the others
+in `ouster_client/src`); a unit test checks the cited lines still say this:
 
 | Fact | Source |
 |---|---|
-| `GET api/v1/sensor/metadata/sensor_info`; `get_config_param?args=active` | `sensor_http_imp.cpp:18-20`, `36-38` |
-| `set_config_param?args=<key>+<value>` answers `"set_config_param"`; `reinitialize` and `save_config_params` answer `{}`; all three are GETs | `sensor_http_imp.cpp:28-34`, `69-75`, `92-98` |
-| the active set is staged whole, then `reinitialize`, then `save_config_params` to persist | `client.cpp:296-371` (`set_config`), lines 351-367 |
-| `udp_ip` beside `udp_dest` on firmware that has it | `client.cpp:341-343`; `types.cpp:612-616` |
-| the keys `udp_dest`, `udp_port_lidar`, `udp_port_imu`, `timestamp_mode` | `types.cpp:612-628`, `794-804` |
-| `TIME_FROM_PTP_1588` and the other clock sources | `types.cpp:50-54` |
-| `prod_line`, `prod_sn`, `image_rev` | `sensor_info.cpp:254-259` |
+| `GET api/v1/sensor/metadata/sensor_info`; `get_config_param?args=active` (firmware before 3.1) | `sensor_http_imp.cpp:46-49`, `53-58` |
+| `set_config_param?args=<key>+<value>` answers `"set_config_param"`; `reinitialize` and `save_config_params` answer `{}`; all three are GETs (firmware before 3.1) | `sensor_http_imp.cpp:69-76`, `157-160`, `171-174`, `346-355` |
+| the active set is staged whole, then `reinitialize`, then `save_config_params` to persist | `client.cpp:309-394` (`set_config`), lines 377-390 |
+| `udp_ip` beside `udp_dest` on firmware that has it | `client.cpp:361-363`; `metadata.cpp:319-324` |
+| the keys `udp_dest`, `udp_port_lidar`, `udp_port_imu`, `timestamp_mode` | `metadata.cpp:315-336`, `types.cpp:460-490` |
+| `TIME_FROM_PTP_1588` and the other clock sources | `types.cpp:46-50` |
+| `prod_line`, `prod_sn`, `image_rev` | `sensor_info.cpp:297-301` |
+| `GET api/v1/system/network`; `PUT api/v1/system/network/ipv4/override` with a JSON string, the address "in CIDR form" | `sensor_http_imp.cpp:151-153`, `357-364`; `ouster_sensor/include/ouster/sensor_http.h:330-341` |
 | the IMU port is the data port + 1 | this repository's contract, `docker/ouster_env.py` |
 
-**Not from the SDK**, which has no call for the address or for PTP beyond `timestamp_mode`:
-`GET api/v1/system/network`, `PUT api/v1/system/network/ipv4/override`, `GET api/v1/time/ptp` and
-`PUT api/v1/time/ptp/profile` are from Ouster's firmware user manual (HTTP API v1) **as recalled**.
-The manual is not in this repository.
+**Not from the SDK**: the shape of the answer of `GET api/v1/system/network`, how a sensor
+behaves after the override, and everything of PTP beyond `timestamp_mode` (`GET api/v1/time/ptp`,
+`PUT api/v1/time/ptp/profile`) are from Ouster's firmware user manual (HTTP API v1) **as
+recalled**. The manual is not in this repository.
 
 ## Not proven, and limits
 
 Nothing here has met a real sensor. In particular a real sensor must confirm:
 
+- **Firmware 3.1 and later.** The tool reads and writes the configuration with the `sensor/cmd`
+  calls, which the SDK uses only before firmware 3.1; from 3.1 the SDK uses
+  `api/v1/sensor/config` (`sensor_http_imp.cpp:19`, `53-63`, `69-89`, `157-179`), and the tool
+  does not. Whether a sensor on 3.1 or later still answers the `sensor/cmd` calls is not known
+  here. The fake sensor of this repository does not (404) when it reports such a firmware: every
+  command of the tool then ends `no-answer` ("did not give its configuration") and nothing is
+  written. The unit tests and the smoke test run the tool against firmware 2.3.0 and 2.5.3.
 - **Every manual path above**: that it exists on the firmware in use, the shape of its answer
   (`ipv4.addr`, `ipv4.override`, `ethaddr`; `profile`, `port_data_set.port_state`), and that a
   PUT takes a JSON string.
-- **The body of the override.** The tool sends `"<address>/<prefix>"`. Whether the sensor takes
-  the prefix form, applies it without a restart, and keeps it over a power cycle is not
-  confirmed. A sensor that refuses the body ends the run `failed`; one that needs a power cycle
-  ends it `unverified` (there is no restart call here).
+- **The body of the override.** The tool sends `"<address>/<prefix>"`, the SDK's form
+  (`set_static_ip`). Whether the sensor applies it without a restart and keeps it over a power
+  cycle is not confirmed. A sensor that refuses the body ends the run `failed`; one that needs a
+  power cycle ends it `unverified` (there is no restart call here).
+- **The gateway.** The tool sets none. The SDK can on firmware 3.2 and later (the override as an
+  object with `addr` and `gateway`, `sensor_http_imp.cpp:366-385`); the tool does not send that
+  form.
 - **The PTP profile table.** What `default`, `gptp`, `automotive-slave` and `default-l2-relaxed`
   mean (transport, delay mechanism, domain 0) is read from the manual as recalled and from the
   profiles' names; `default-l2-relaxed` as "L2 with end-to-end delay" is from its name alone. The
@@ -108,5 +120,5 @@ Nothing here has met a real sensor. In particular a real sensor must confirm:
   start anyway.
 - A sensor moved by `set-net` is put back by another `set-net`; the tool never deletes the
   override, so a sensor that was on DHCP stays static.
-- Firmware before 2.2 (read by other paths, or over TCP, in the SDK: `sensor_http.cpp:30-51`) is
-  answered `no-answer`.
+- Firmware before 2.2 (no `sensor_info` path) is answered `no-answer`. The tool does not check
+  the firmware otherwise; the driver in this image needs 2.4 or later (`sensor_http.cpp:57-62`).

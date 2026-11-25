@@ -28,34 +28,48 @@ The rules it keeps (tests/unit/test_sensor_tool.py has a test for each):
 - One connection at a time, counted in `sessions`.
 - What cannot be set is said in `unsupported`, never skipped silently.
 
-Where each fact comes from. "SDK" is the Ouster SDK this repository builds, the submodule
-ouster-ros/ouster-sdk at commit 483206f, directory ouster_client/src:
+Where each fact comes from. "SDK" is the Ouster SDK this repository builds, 0.16.2, in the tree
+at ouster-ros/ouster-sdk (directories ouster_sensor/src and ouster_client/src):
 
-- `GET api/v1/sensor/metadata/sensor_info`: SDK sensor_http_imp.cpp:18-20. Its keys `prod_line`,
-  `prod_sn`, `image_rev`: SDK sensor_info.cpp:254-259.
-- `GET api/v1/sensor/cmd/get_config_param?args=active`: SDK sensor_http_imp.cpp:36-38.
+- `GET api/v1/sensor/metadata/sensor_info`: SDK ouster_sensor/src/sensor_http_imp.cpp:46-49. Its
+  keys `prod_line`, `prod_sn`, `image_rev`: SDK ouster_client/src/sensor_info.cpp:297-301.
+- `GET api/v1/sensor/cmd/get_config_param?args=active`: SDK sensor_http_imp.cpp:53-58.
 - The configuration keys `udp_dest` (and the old `udp_ip`), `udp_port_lidar`, `udp_port_imu`,
-  `timestamp_mode`: SDK types.cpp:612-628 (read) and 794-804 (written). The values of
-  `timestamp_mode`, among them `TIME_FROM_PTP_1588`: SDK types.cpp:50-54.
-- A configuration change is made as the SDK's set_config makes it (client.cpp:296-371): the
-  active parameters with the changed keys are staged whole (client.cpp:351-359) with
-  `set_config_param?args=.+<JSON>`, answered `"set_config_param"` (sensor_http_imp.cpp:28-34), so
-  that nothing staged earlier comes along; then `reinitialize`, answered `{}`
-  (sensor_http_imp.cpp:69-71; client.cpp:361); then `save_config_params`, answered `{}`
-  (sensor_http_imp.cpp:73-75; client.cpp:365-367), which keeps them over a power cycle. `udp_ip`
-  is written beside `udp_dest` where the sensor has it (client.cpp:341-343).
+  `timestamp_mode`: SDK ouster_client/src/metadata.cpp:315-336 (read) and
+  ouster_client/src/types.cpp:460-490 (written). The values of `timestamp_mode`, among them
+  `TIME_FROM_PTP_1588`: SDK types.cpp:46-50.
+- A configuration change is made as the SDK's set_config makes it
+  (ouster_sensor/src/client.cpp:309-394): the active parameters with the changed keys are staged
+  whole (client.cpp:377-383) with `set_config_param?args=.+<JSON>`, answered `"set_config_param"`
+  (sensor_http_imp.cpp:69-76), so that nothing staged earlier comes along; then `reinitialize`,
+  answered `{}` (sensor_http_imp.cpp:157-160; client.cpp:385); then `save_config_params`,
+  answered `{}` (sensor_http_imp.cpp:171-174; client.cpp:390), which keeps them over a power
+  cycle. `udp_ip` is written beside `udp_dest` where the sensor has it (client.cpp:361-363 does
+  so for an automatic destination).
 - The IMU port is the data port plus one: this repository's driver contract, docker/ouster_env.py
   ("the IMU port is DATA_PORT + 1").
 
-**Not from the SDK, which has no call for any of it: the address and the PTP profile.** These are
-from Ouster's firmware user manual (HTTP API v1), as recalled; the manual is not in this
-repository and **a real sensor must confirm every one of them**:
+**Firmware 3.1 and later is not spoken here.** For those the SDK reads and writes the
+configuration through `api/v1/sensor/config` (GET, and POST with `staging`, `reinit` and
+`persist`; sensor_http_imp.cpp:19 `MINIMUM_STAGING_VERSION`, 53-63, 69-89, 157-179), and it uses
+the `sensor/cmd` calls above only before 3.1. This tool sends the `sensor/cmd` calls to every
+sensor. A sensor that no longer answers them is reported `no-answer` ("did not give its
+configuration") and nothing is written to it; whether firmware 3.1 and later still answers them
+is not known here. The driver in this image needs firmware 2.4 or later (SDK
+ouster_sensor/src/sensor_http.cpp:57-62); this tool does not check the firmware.
 
-- `GET api/v1/system/network`: `ethaddr`, and `ipv4` with `addr` ("<address>/<prefix>"),
-  `link_local` and `override` (null, or the static address).
-- `PUT api/v1/system/network/ipv4/override` with a JSON string as the body. The sensor resets its
-  network within about a second and then answers only at the new address. This tool sends
-  `"<address>/<prefix>"`: whether the sensor accepts the form with the prefix is not confirmed.
+**The address and the PTP profile.** The SDK names the address paths (it has no call for PTP);
+the shape of the answers and the sensor's behaviour are from Ouster's firmware user manual (HTTP
+API v1), as recalled. The manual is not in this repository and **a real sensor must confirm
+every one of them**:
+
+- `GET api/v1/system/network` (SDK sensor_http_imp.cpp:151-153): `ethaddr`, and `ipv4` with
+  `addr` ("<address>/<prefix>"), `link_local` and `override` (null, or the static address).
+- `PUT api/v1/system/network/ipv4/override` with a JSON string as the body (SDK
+  sensor_http_imp.cpp:357-364, `set_static_ip`: "the static IP to set on the sensor in CIDR
+  form", ouster_sensor/include/ouster/sensor_http.h:330-341). The sensor resets its network
+  within about a second and then answers only at the new address. This tool sends
+  `"<address>/<prefix>"`, the SDK's form; no real sensor has confirmed it here.
   A sensor that refuses the body answers an error, and the run ends `failed` with nothing changed.
   DELETE of the override returns the sensor to DHCP; this tool never sends it.
 - `GET api/v1/time/ptp` (`profile`, and `port_data_set.port_state`), and
@@ -66,7 +80,9 @@ repository and **a real sensor must confirm every one of them**:
 
 Not possible, and said in the answer (`unsupported`) when it is asked for:
 
-- **the gateway**: no call reads or sets one (asked as anything but 0.0.0.0);
+- **the gateway**: this tool reads and sets none (asked as anything but 0.0.0.0). The SDK can set
+  one on firmware 3.2 and later (sensor_http_imp.cpp:366-385: the override as an object with
+  `addr` and `gateway`); that form is not sent here;
 - **a PTP domain other than 0**, and **peer-to-peer delay over UDPv4**: no firmware profile has them;
 - **PTP transport and delay mechanism on a sensor that does not show its profile**: what cannot
   be read is not written;
@@ -365,20 +381,20 @@ def run_tool(argv, vendor: str, sessions: Sessions, handlers: dict, extra=None, 
 # (Hesai, LSLiDAR, Ouster, Seyond); the sources of what follows are in the module text.
 
 PORTS = {"http": 80}
-SENSOR_INFO = "api/v1/sensor/metadata/sensor_info"  # SDK sensor_http_imp.cpp:19
-ACTIVE = "api/v1/sensor/cmd/get_config_param?args=active"  # SDK sensor_http_imp.cpp:37
-NETWORK = "api/v1/system/network"  # the manual, as recalled
+SENSOR_INFO = "api/v1/sensor/metadata/sensor_info"  # SDK sensor_http_imp.cpp:47
+ACTIVE = "api/v1/sensor/cmd/get_config_param?args=active"  # SDK sensor_http_imp.cpp:55-57 (firmware before 3.1)
+NETWORK = "api/v1/system/network"  # SDK sensor_http_imp.cpp:152; its answer: the manual, as recalled
 PTP = "api/v1/time/ptp"  # the manual, as recalled
 READS = (SENSOR_INFO, ACTIVE, NETWORK, PTP)  # every path this tool reads
-SET_PARAM = "api/v1/sensor/cmd/set_config_param"  # SDK sensor_http_imp.cpp:32
-REINITIALIZE = "api/v1/sensor/cmd/reinitialize"  # SDK sensor_http_imp.cpp:70
-SAVE = "api/v1/sensor/cmd/save_config_params"  # SDK sensor_http_imp.cpp:74
-OVERRIDE = "api/v1/system/network/ipv4/override"  # the manual, as recalled
+SET_PARAM = "api/v1/sensor/cmd/set_config_param"  # SDK sensor_http_imp.cpp:73 (firmware before 3.1)
+REINITIALIZE = "api/v1/sensor/cmd/reinitialize"  # SDK sensor_http_imp.cpp:158 (firmware before 3.1)
+SAVE = "api/v1/sensor/cmd/save_config_params"  # SDK sensor_http_imp.cpp:172 (firmware before 3.1)
+OVERRIDE = "api/v1/system/network/ipv4/override"  # SDK sensor_http_imp.cpp:362
 PTP_PROFILE = "api/v1/time/ptp/profile"  # the manual, as recalled
 WRITES = (SET_PARAM, REINITIALIZE, SAVE, OVERRIDE, PTP_PROFILE)  # every path this tool writes
-# SDK types.cpp:50-54, timestamp_mode_strings
+# SDK types.cpp:46-50, TIMESTAMP_MODE_STRINGS
 CLOCK = {"TIME_FROM_INTERNAL_OSC": "internal", "TIME_FROM_SYNC_PULSE_IN": "sync-pulse", "TIME_FROM_PTP_1588": "ptp"}
-SETTABLE = ("udp_dest", "udp_ip", "udp_port_lidar", "udp_port_imu", "timestamp_mode")  # SDK types.cpp:794-804
+SETTABLE = ("udp_dest", "udp_ip", "udp_port_lidar", "udp_port_imu", "timestamp_mode")  # SDK types.cpp:460-490
 # The firmware's PTP profiles: (the interface's profile name, transport, delay mechanism). Every one
 # is taken to be domain 0. From the manual as recalled; "default-l2-relaxed" from its name alone.
 PROFILES = {"default": ("1588v2", "UDPv4", "E2E"), "default-l2-relaxed": ("1588v2", "L2", "E2E"),
@@ -444,18 +460,18 @@ class Writer:
 
     def _command(self, ip: str, path: str, expected: str) -> None:
         try:
-            answer = self._send(ip, "GET", path).strip()  # the SDK's execute(), sensor_http_imp.cpp:92-98: these commands are GETs
+            answer = self._send(ip, "GET", path).strip()  # the SDK's execute(), sensor_http_imp.cpp:346-355: these commands are GETs
         except Refusal as exc:
             raise Stop("failed", f"the sensor refused: {exc}") from None
         if answer != expected:
             raise Stop("failed", f"the sensor answered {answer[:120]!r} to {path.split('?')[0]}, not {expected}")
 
     def configure(self, ip: str, active: dict, changes: dict) -> None:
-        """SDK client.cpp:296-371, set_config: stage the active parameters with `changes`, make
+        """SDK client.cpp:309-394, set_config, as it does it before firmware 3.1: stage the active parameters with `changes`, make
         them effective, keep them."""
         if not set(changes) <= set(SETTABLE):
             raise ValueError(f"not a parameter this tool sets: {sorted(set(changes) - set(SETTABLE))}")
-        # curl_easy_escape (SDK curl_client.h:33-39) and quote(safe="") leave the same characters as they are
+        # curl_easy_escape (SDK curl_client.h:100-107) and quote(safe="") leave the same characters as they are
         staged = urllib.parse.quote(json.dumps({**active, **changes}, separators=(",", ":")), safe="")
         self._command(ip, f"{SET_PARAM}?args=.+{staged}", '"set_config_param"')
         self._command(ip, REINITIALIZE, "{}")
@@ -505,7 +521,8 @@ def read_all(run: Run, ip: str):
     try:
         info = read(run, ip, SENSOR_INFO)
     except Refusal as exc:
-        # SDK sensor_http.cpp:30-51: firmware before 2.2 is read by other paths, or over TCP
+        # Firmware before 2.2 has no such path (the SDK this repository built before read it by other
+        # paths, or over TCP). SDK sensor_http.cpp:47-62 reads sensor_info first and speaks to 2.4 or later only.
         raise NoAnswer(f"what answers at {ip}:{PORTS['http']} is not an Ouster sensor with firmware 2.2 or later ({exc})") from None
     if not isinstance(info, dict) or not (info.get("prod_sn") or info.get("prod_line")):
         raise NoAnswer(f"what answers at {ip}:{PORTS['http']} is not an Ouster sensor (no sensor_info)")
@@ -534,7 +551,7 @@ def read_all(run: Run, ip: str):
                 break
     except (Refusal, NoAnswer) as exc:
         run.warn(f"the sensor's network settings were not read: {exc}")
-    address = active.get("udp_dest") or active.get("udp_ip")  # SDK types.cpp:612-616: old firmware has udp_ip
+    address = active.get("udp_dest") or active.get("udp_ip")  # SDK metadata.cpp:319-324: old firmware has udp_ip
     try:
         dest["ip"] = str(ipaddress.IPv4Address(address)) if isinstance(address, str) and address else None
     except ValueError:
@@ -601,7 +618,7 @@ def set_dest(run: Run) -> None:
     run.out["identity"], state = read_all(run, ip)
     settle(run, "dest", wanted, state)
     changes = {"udp_dest": wanted["ip"], "udp_port_lidar": wanted["data_port"], "udp_port_imu": wanted["imu_port"]}
-    if "udp_ip" in state["dest"]["_active"]:  # SDK client.cpp:341-343
+    if "udp_ip" in state["dest"]["_active"]:  # SDK client.cpp:361-363
         changes["udp_ip"] = wanted["ip"]
     Writer(run).configure(ip, state["dest"]["_active"], changes)
     after, good = await_state(time.monotonic() + args.verify_timeout, reader(run, ip), lambda s: not differing("dest", wanted, s["dest"]))

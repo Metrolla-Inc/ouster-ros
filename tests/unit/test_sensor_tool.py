@@ -171,6 +171,17 @@ def test_no_answer(fake):
     assert status == 1 and sensor.requests == []
 
 
+def test_firmware_3_1_is_not_spoken_and_nothing_is_written(fake):
+    """The limit docs/sensor-tool.md names: a sensor that answers the configuration only through
+    api/v1/sensor/config (the fake on firmware 3.1 and later) is `no-answer` for every command."""
+    sensor = fake(at=A, staging_api=True)
+    for command, more in (("probe", []), ("get-net", []), *((name, [*SETS[name], *STOPPED]) for name in SETS)):
+        answer, status = run(sensor, command, "--ip", A, *more, expect="no-answer")
+        assert status == 1 and "did not give its configuration" in answer["message"] and answer["after"] is None
+    assert sensor.reinits == 0 and sensor.persisted == 0 and not any(r.startswith(("PUT", "POST", "DELETE")) for r in sensor.requests)
+    assert {r.removeprefix("GET /") for r in sensor.requests} == {sensor_tool.SENSOR_INFO, sensor_tool.ACTIVE}
+
+
 def test_something_else_on_port_80_is_not_an_ouster(fake, monkeypatch):
     sensor = fake(at=A)
     monkeypatch.setattr(sensor.rec, "meta", {**sensor.rec.meta, "prod_sn": "", "prod_line": ""})
@@ -523,18 +534,41 @@ def test_the_interface_part_is_the_shared_text():
 
 
 def test_the_sources_cited_are_where_the_tool_says():
-    """The SDK lines the tool cites still say what it took from them (the submodule is pinned)."""
-    sdk = TOOL.parents[1] / "ouster-ros" / "ouster-sdk" / "ouster_client" / "src"
-    http = (sdk / "sensor_http_imp.cpp").read_text().splitlines()
-    assert sensor_tool.SENSOR_INFO in http[18] and sensor_tool.ACTIVE in http[36] and sensor_tool.SET_PARAM in http[31]
-    assert '"\\"set_config_param\\""' in http[32] and sensor_tool.REINITIALIZE in http[69] and sensor_tool.SAVE in http[73]
-    types_cpp = (sdk / "types.cpp").read_text().splitlines()
-    assert all(f'"{name}"' in "".join(types_cpp[49:54]) for name in sensor_tool.CLOCK)
-    assert "udp_dest" in types_cpp[611] and "udp_ip" in types_cpp[613] and "udp_port_lidar" in types_cpp[621]
-    assert "udp_port_imu" in types_cpp[623] and "timestamp_mode" in types_cpp[625]
-    assert all(f'root["{key}"]' in "".join(types_cpp[793:804]) for key in sensor_tool.SETTABLE if key != "udp_ip")
-    client = (sdk / "client.cpp").read_text().splitlines()
-    assert 'set_config_param(".", config_params_str)' in client[358] and "reinitialize()" in client[360] and "save_config_params()" in client[365]
-    assert 'config_params["udp_ip"]' in client[341]
-    info = (sdk / "sensor_info.cpp").read_text().splitlines()
-    assert all(key in "".join(info[253:259]) for key in ("image_rev", "prod_line", "prod_sn"))
+    """The SDK lines the tool cites still say what it took from them (the SDK is in the tree)."""
+    sdk = TOOL.parents[1] / "ouster-ros" / "ouster-sdk"
+    assert "'0.16.2'" in (sdk / "VERSION").read_text()
+
+    def lines(path: str, first: int, last: int) -> str:
+        """Lines `first` to `last` of an SDK file, numbered from 1 as the tool cites them."""
+        return "".join((sdk / path).read_text().splitlines()[first - 1:last])
+
+    def api(path: str) -> str:  # the SDK writes "api/v1/" + api_prefix_ + "<the rest>"
+        return '"' + path.removeprefix("api/v1/").partition("?")[0]
+
+    http = "ouster_sensor/src/sensor_http_imp.cpp"
+    assert api(sensor_tool.SENSOR_INFO) in lines(http, 47, 47)
+    assert "MINIMUM_STAGING_VERSION = Version(3, 1, 0)" in lines(http, 19, 19)
+    for path, first, last in ((sensor_tool.ACTIVE, 53, 58), (sensor_tool.SET_PARAM, 69, 76), (sensor_tool.REINITIALIZE, 157, 160),
+                              (sensor_tool.SAVE, 171, 174)):  # each is what the SDK sends before firmware 3.1 only
+        cited = lines(http, first, last)
+        assert "firmware_version() < MINIMUM_STAGING_VERSION" in cited and api(path) in cited
+    assert '"\\"set_config_param\\""' in lines(http, 75, 75) and '"{}"' in lines(http, 158, 158) and '"{}"' in lines(http, 172, 172)
+    assert "get(url, timeout_sec)" in lines(http, 346, 355)  # execute() is a GET
+    assert api(sensor_tool.NETWORK) + '"' in lines(http, 152, 152)
+    assert "put(" in lines(http, 357, 364) and api(sensor_tool.OVERRIDE) + '"' in lines(http, 362, 362)
+    assert 'root["gateway"]' in lines(http, 366, 385) and "MINIMUM_ZM_VERSION" in lines(http, 366, 385)
+    assert "in CIDR form" in lines("ouster_sensor/include/ouster/sensor_http.h", 330, 341)
+    floor = lines("ouster_sensor/src/sensor_http.cpp", 47, 62)
+    assert "sensor/metadata/sensor_info" in floor and "fw.major == 2 && fw.minor <= 3" in floor and '"2.4 or later."' in floor
+    assert "curl_easy_escape" in lines("ouster_sensor/src/curl_client.h", 100, 107)
+    types_cpp = "ouster_client/src/types.cpp"
+    assert all(f'"{name}"' in lines(types_cpp, 46, 50) for name in sensor_tool.CLOCK)
+    assert all(f'root["{key}"]' in lines(types_cpp, 460, 490) for key in sensor_tool.SETTABLE if key != "udp_ip")
+    metadata = "ouster_client/src/metadata.cpp"
+    assert all(f"$.config_params.{key}" in lines(metadata, 315, 336) for key in sensor_tool.SETTABLE)
+    assert "udp_ip" in lines(metadata, 319, 324)
+    client = "ouster_sensor/src/client.cpp"
+    assert "bool set_config(" in lines(client, 309, 309) and "return true;" in lines(client, 309, 394)
+    assert 'set_config_param(".", config_params_str' in lines(client, 377, 383) and "reinitialize(" in lines(client, 385, 385)
+    assert "save_config_params(" in lines(client, 390, 390) and 'config_params["udp_ip"]' in lines(client, 361, 363)
+    assert all(f'["{key}"]' in lines("ouster_client/src/sensor_info.cpp", 297, 301) for key in ("image_rev", "prod_line", "prod_sn"))
