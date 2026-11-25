@@ -114,9 +114,9 @@ rebuilt or moved.
    OS-2-128 recording 3 of 4 rows are shifted, so 75% of points get a different `t` (by up to 12
    columns, about 1.2 ms at 1024x10). Both modes. Message stamps (`header.stamp`) are unchanged:
    host receive time extrapolated to the scan start (`TIME_FROM_ROS_TIME`), the first column's
-   time (sensor/gps), minus 37 s for PTP. Proof: smoke checks `t` of every point of the first
-   cloud against the recording (`--check-t`, legacy and contract runs); unit tests show the old
-   rule fails that check; stamps checked as before (host within the window, PTP 37 s behind).
+   time (sensor/gps), minus 37 s for PTP. Proof: smoke checks `t` of every point of every cloud
+   it receives against the recording (`--check-t`, legacy and contract runs); unit tests show the
+   old rule fails that check; stamps checked as before (host within the window, PTP 37 s behind).
 5. **Point layouts of other point types (vendor BREAKING).** `native`/`legacy` types narrowed
    fields (`Point_LEGACY` signal/near_ir uint16 to uint8, reflectivity uint32 to uint8;
    `RNG19_RFL8_SIG16_NIR16` reflectivity uint16 to uint8; `RNG15_RFL8_NIR8` reflectivity and
@@ -157,6 +157,18 @@ rebuilt or moved.
     fix every sensor on firmware 2.4-3.1 with the default RNG19 profile would publish no cloud.
 13. **Build**: SDK built from the in-tree copy with `libzip-dev`, `libssl-dev`, `pkg-config`; the
     `cv_bridge` CMake workaround dropped (above). Proof: the image build in CI (amd64 and arm64).
+14. **First cloud after start can be partial (unchanged from the old base).** The node opens its
+    UDP socket and points the sensor at it before it starts reading (configure, then activate),
+    and the vendor's `min_scan_valid_columns_ratio` is 0.0 in both the old and the new parameter
+    file, so the first published scan can hold only what the socket buffer kept, with the other
+    columns zeroed. In the failing smoke runs that was the first 17 of 64 packets, consistent with
+    a buffer of 2 x 212992 bytes (the kernel's default `net.core.rmem_max`; the SDK asks for
+    1 MiB). A driver started mid-rotation on a real sensor publishes a partial first scan too.
+    Both modes. Proof: smoke accepts the first cloud only as such a start-up scan (every column
+    exact or empty) and requires every later cloud complete and exact;
+    `tests/regression/test_smoke_check.py` reproduces the numbers of the CI runs that failed on it
+    (ros2 a13960b). A consumer that needs whole scans can set `min_scan_valid_columns_ratio`
+    (legacy parameter file; not a contract variable).
 
 ## Goldens
 
