@@ -31,13 +31,25 @@ def test_the_ci_numbers_are_a_scan_of_the_first_17_packets():
         == (43625, 41319, 34816, 34816, 34816, 8800)
 
 
-def test_a_start_up_scan_first_then_complete_clouds_passes():
-    out = cc.compare_all([START_UP, FULL, FULL], REC, True)
+# PR #9's first CI run (45577055001) then showed the second start-up scan: the last 28 packets of
+# a later frame (measurement ids 576-1023), its point times relative to a scan start the driver
+# imputes across the frames it missed; the third cloud was complete and exact.
+SECOND = build(REC, times=[t + 5_000_000 for t in TIMES], missing=range(0, REC.width - 28 * 16))
+
+
+def test_the_second_ci_numbers_are_the_last_28_packets_of_a_frame():
+    report = cc.compare(SECOND, REC)
+    assert (report["range_equal"], report["reflectivity_equal"], report["intensity_equal"]) \
+        == (65641, 64188, 57344)
+
+
+def test_start_up_scans_then_complete_clouds_pass():
+    out = cc.compare_all([START_UP, SECOND, FULL, FULL, FULL], REC, True)
     assert out["problems"] == []
-    assert out["first_cloud"]["columns_present"] == 272
+    assert [r["columns_present"] for r in out["start_up_clouds"]] == [272, 448]
     assert out["pixels"]["range_equal"] == N and out["pixels"]["t_measured_column"] == N
 
 
-def test_a_start_up_scan_later_than_the_first_cloud_still_fails():
+def test_a_start_up_scan_after_a_complete_cloud_still_fails():
     out = cc.compare_all([FULL, START_UP, FULL], REC, True)
     assert "pixels (cloud 2): range_equal: 43625 of 131072 pixels" in out["problems"]

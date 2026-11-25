@@ -14,14 +14,19 @@ distance from the origin matches its range (within the beam-origin offset). The 
 point was measured in (ouster-ros 0.14+) and the time of its output column (the v1.0.0 base);
 with --check-t every point must follow the first.
 
-The first cloud received may be the driver's start-up scan: the driver opens its UDP socket and
-points the sensor at it before it starts reading, so the socket's buffer holds the first packets
-of a frame and drops the rest, and the vendor's default min_scan_valid_columns_ratio (0.0)
-publishes that scan with the missing columns zeroed (a real sensor gives the same partial scan
-when the driver starts mid-rotation). So in the first cloud each measured column must either
-equal the recording in every row or be empty (all four channels zero in every row), with at least
-one column present; every later cloud must be complete and equal. ``pixels`` in the report is the
-second cloud's comparison, ``first_cloud`` the first's.
+The first clouds received may be the driver's start-up scans. The driver opens its UDP socket
+and points the sensor at it before it starts reading, so the socket's buffer holds the first
+packets of one frame and drops the rest; after reading those it joins the live packets in the
+middle of a later frame. The vendor's default min_scan_valid_columns_ratio (0.0) publishes both
+scans with the missing columns zeroed (a real sensor gives the same partial scan when the driver
+starts mid-rotation), and the second one's point times are relative to a scan start the driver
+imputes across the frames it missed. So every cloud before the first complete one is a start-up
+scan: each measured column must equal the recording in every row (range, reflectivity, signal,
+near-IR) or be empty (all four zero in every row), with at least one column present; its t is
+counted, not required. At most MAX_START_UP such clouds. From the first complete cloud on every
+cloud must be complete and exact (t too with --check-t), and at least MIN_COMPLETE complete clouds
+must arrive. ``start_up_clouds`` lists the start-up scans' reports, ``pixels`` is the first
+complete cloud's, ``later_clouds`` the problems of the complete clouds after it.
 
 Prints a JSON report; exit 0 when every check passed, 1 otherwise.
 """
@@ -207,24 +212,41 @@ def check_imu(msgs: list[tuple[float, object]], rec: op.Recording, frame: str,
     return report
 
 
+MAX_START_UP = 3
+MIN_COMPLETE = 2
+
+
 def compare_all(msgs: list, rec: op.Recording, check_t: bool) -> dict:
-    """Pixel reports for every cloud: the first may be a start-up scan (compare allow_partial),
-    the others must be complete. Returns first_cloud, pixels (the second cloud's report, or the
-    first's when only one arrived), later_clouds (problems of the third and later) and problems."""
-    out: dict = {"problems": [], "later_clouds": []}
+    """Pixel reports for every cloud (module docstring): start-up scans until the first complete
+    cloud, then complete clouds only."""
+    out: dict = {"problems": [], "start_up_clouds": [], "later_clouds": []}
+    complete = 0
     for k, msg in enumerate(msgs):
+        label = f"pixels (cloud {k + 1})"
         try:
-            rep = compare(msg, rec, check_t, allow_partial=(k == 0))
+            if not complete:
+                # t of a start-up scan is relative to an imputed scan start: counted only
+                rep = compare(msg, rec, check_t=False, allow_partial=True)
+                if rep.get("partial"):
+                    out["start_up_clouds"].append(rep)
+                    if len(out["start_up_clouds"]) > MAX_START_UP:
+                        out["problems"].append(f"{label}: more than {MAX_START_UP} partial "
+                                               "clouds before the first complete one")
+                    out["problems"] += [f"{label}: {p}" for p in rep["problems"]]
+                    continue
+            rep = compare(msg, rec, check_t)
         except ValueError as exc:
-            rep = {"problems": [str(exc)]}
-        label = "pixels" if k == 1 else "first_cloud" if k == 0 else None
-        if label:
-            out[label] = rep
+            out["problems"].append(f"{label}: {exc}")
+            continue
+        complete += 1
+        if complete == 1:
+            out["pixels"] = rep
         else:
             out["later_clouds"].append({"cloud": k + 1, "problems": rep["problems"]})
-        out["problems"] += [f"pixels (cloud {k + 1}): {p}" for p in rep["problems"]]
-    if len(msgs) == 1:
-        out["pixels"] = out["first_cloud"]
+        out["problems"] += [f"{label}: {p}" for p in rep["problems"]]
+    if complete < MIN_COMPLETE:
+        out["problems"].append(f"{complete} complete cloud(s) after {len(out['start_up_clouds'])} "
+                               f"start-up scan(s); at least {MIN_COMPLETE} needed")
     return out
 
 

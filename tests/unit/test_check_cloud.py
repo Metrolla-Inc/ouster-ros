@@ -156,13 +156,27 @@ def test_a_complete_first_cloud_is_not_reported_partial():
     assert report["problems"] == [] and "partial" not in report
 
 
-def test_every_cloud_after_the_first_must_be_complete():
+def test_start_up_scans_then_complete_clouds_only():
     good = build(REC, times=TIMES)
-    partial = build(REC, times=TIMES, missing=range(272, 1024))
-    assert cc.compare_all([partial, good, good], REC, True)["problems"] == []
-    out = cc.compare_all([good, good, partial], REC, True)
+    head = build(REC, times=TIMES, missing=range(272, 1024))
+    shifted = [t + 5_000_000 for t in TIMES]  # scan start imputed across missed frames
+    tail = build(REC, times=shifted, missing=range(0, 576))
+    out = cc.compare_all([head, tail, good, good, good], REC, True)
+    assert out["problems"] == [] and len(out["start_up_clouds"]) == 2
+    assert out["pixels"]["t_measured_column"] == REC.width * REC.height
+    # a partial cloud after a complete one fails
+    out = cc.compare_all([good, good, head], REC, True)
     assert out["problems"] and all(p.startswith("pixels (cloud 3): ") for p in out["problems"])
-    assert out["later_clouds"][0]["cloud"] == 3
-    out = cc.compare_all([good, partial, good], REC, True)
-    assert out["problems"] and all(p.startswith("pixels (cloud 2): ") for p in out["problems"])
-    assert out["pixels"]["range_equal"] < REC.width * REC.height
+    assert out["later_clouds"][0]["cloud"] == 2
+    # a complete cloud with wrong point times fails, also as the first cloud
+    out = cc.compare_all([build(REC, times=shifted), good], REC, True)
+    assert any(p.startswith("pixels (cloud 1): t: ") for p in out["problems"])
+
+
+def test_at_least_two_complete_clouds_and_few_start_up_scans():
+    good = build(REC, times=TIMES)
+    head = build(REC, times=TIMES, missing=range(272, 1024))
+    out = cc.compare_all([head, head, good], REC, True)
+    assert out["problems"] == ["1 complete cloud(s) after 2 start-up scan(s); at least 2 needed"]
+    out = cc.compare_all([head] * 4 + [good, good], REC, True)
+    assert any("more than 3 partial clouds" in p for p in out["problems"])
