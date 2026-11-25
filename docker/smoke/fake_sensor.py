@@ -90,6 +90,7 @@ class Sensor:
         self.ptp_profile = "default"
         self.faults: set[str] = set()
         self.open_now = self.max_open = 0
+        self.counting = threading.Lock()
 
     def network(self) -> dict:
         addr = f"{self.address or '192.0.2.123'}/{self.prefix}"
@@ -129,6 +130,10 @@ def make_handler(sensor: Sensor):
 
         def reply(self, code: int, body: str, ctype: str = "application/json") -> None:
             data = body.encode()
+            if self.close_connection:
+                # The last answer on this connection: for the count it is closed now. The client
+                # may open its next connection as soon as it has the answer, before finish() runs.
+                self.leave()
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(data)))
@@ -143,13 +148,19 @@ def make_handler(sensor: Sensor):
 
         def setup(self):
             super().setup()
-            with sensor.lock:
+            with sensor.counting:
+                self.counted = True
                 sensor.open_now += 1
                 sensor.max_open = max(sensor.max_open, sensor.open_now)
 
+        def leave(self):
+            with sensor.counting:  # its own lock: reply() is also called with sensor.lock held
+                if self.counted:
+                    self.counted = False
+                    sensor.open_now -= 1
+
         def finish(self):
-            with sensor.lock:
-                sensor.open_now -= 1
+            self.leave()
             super().finish()
 
         def elsewhere(self) -> bool:
