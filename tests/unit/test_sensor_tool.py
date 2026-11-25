@@ -119,8 +119,9 @@ def run(sensor, *argv, expect=None):
 
 
 def writes(sensor) -> list:
-    """The requests the sensor got that are not one of the tool's four reads."""
-    return [r for r in sensor.requests if r.lstrip("/") not in sensor_tool.READS]
+    """The requests the sensor got that are not one of the tool's four reads (the fake logs
+    "<method> /<path>[ <body>]")."""
+    return [r for r in sensor.requests if r.removeprefix("GET /") not in sensor_tool.READS]
 
 
 def staged_blob(request: str) -> dict:
@@ -238,8 +239,8 @@ def test_set_dest_changes_only_the_destination_and_is_idempotent(fake):
     assert answer["before"]["dest"] == {"ip": None, "data_port": 7502, "imu_port": 7503}
     assert answer["wanted"] == {"dest": {"ip": "127.0.0.77", "data_port": 2368, "imu_port": 2369}} == {"dest": answer["after"]["dest"]}
     sent = writes(sensor)
-    assert [r.partition("?")[0] for r in sent] == ["/api/v1/sensor/cmd/set_config_param", "/api/v1/sensor/cmd/reinitialize",
-                                                  "/api/v1/sensor/cmd/save_config_params"]
+    assert [r.partition("?")[0] for r in sent] == ["GET /api/v1/sensor/cmd/set_config_param", "GET /api/v1/sensor/cmd/reinitialize",
+                                                  "GET /api/v1/sensor/cmd/save_config_params"]
     assert staged_blob(sent[0]) == {**before, "udp_dest": "127.0.0.77", "udp_port_lidar": 2368, "udp_port_imu": 2369}
     assert sensor.active == {**before, "udp_dest": "127.0.0.77", "udp_port_lidar": 2368, "udp_port_imu": 2369}
     assert sensor.reinits == 1 and sensor.persisted == 1

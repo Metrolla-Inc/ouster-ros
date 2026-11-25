@@ -1,5 +1,9 @@
 name: Docker Build and Push
 
+# Tags: v<vendor version>-metrolla.<n>, e.g. v0.15.1-metrolla.1 for vendor release 0.15.1
+# (jazzy-0.15.1); owner, 22 Nov 2026: Metrolla tags never reuse a vendor's tag. The push job
+# refuses any other v* tag. The released v1.0.0 image stays as it is (tags are never moved).
+#
 # Images are pushed for version tags only (v*), never for a branch or a pull request, and a tag
 # that already exists in the registry is never overwritten (tags are immutable). The image is
 # built from the tagged commit. Pull requests build the same image for both platforms (natively,
@@ -100,6 +104,15 @@ jobs:
         run: |
           if [ "$REF_TYPE" != tag ]; then
             echo "refusing to push: $REF_NAME is a $REF_TYPE, images are pushed for tags only" >&2
+            exit 1
+          fi
+          # Metrolla tags never reuse a vendor's tag (owner, 22 Nov 2026): v<vendor version>-metrolla.<n>
+          if ! [[ "$REF_NAME" =~ ^v[0-9A-Za-z][0-9A-Za-z._-]*-metrolla\.[1-9][0-9]*$ ]]; then
+            echo "refusing to push: tag $REF_NAME is not v<vendor version>-metrolla.<n> (e.g. v0.15.1-metrolla.1)" >&2
+            exit 1
+          fi
+          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]; then
+            echo "refusing to push: the checkout is not the tagged commit $GITHUB_SHA" >&2
             exit 1
           fi
           # replace "/" with "-", lowercase, and collapse any disallowed characters (as before)

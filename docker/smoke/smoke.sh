@@ -5,16 +5,20 @@
 #   1. Image facts: entrypoint, command and user are what the fleets run today.
 #   2. Legacy mode: the fleet environments of tests/legacy/cases never reach the contract; the
 #      image's own command (ros2 launch ... driver.launch.py sensor_hostname:=192.168.1.201)
-#      publishes /ouster/points from the fake sensor's recorded packets, pixel for pixel. With
-#      OLD_IMAGE (the released ouster-ros-driver:v1.0.0) the same run is compared with it.
+#      publishes /ouster/points from the fake sensor's recorded packets, pixel for pixel and with
+#      each point's time t; what the vendor's defaults write to the sensor is listed and checked.
+#      With OLD_IMAGE (the released ouster-ros-driver:v1.0.0) the same run is compared with it.
 #   3. Contract checks and refusals: stdout/stderr byte-identical to tests/regression/golden.
 #   4. Contract runs as the product does it (uid 97000, read-only root, tmpfs /tmp, cap-drop ALL,
 #      no-new-privileges, host network and IPC) against the fake sensor: PointCloud2 on the
 #      contract's topic and frame, stamps, organized size, every pixel, the sensor configured
-#      with the contract's ports, time mode and destination; clean stop on SIGTERM (exit 0).
-#   5. sensor-tool (docs/sensor-tool.md) is in the image and runs with the host's own container
-#      options: a usage error is its one JSON object, and it reads the fake sensor over HTTP
-#      without writing to it. No real sensor is contacted.
+#      with the contract's ports, time mode and destination and nothing else changed on it; clean
+#      stop on SIGTERM (exit 0). The fake sensor reports firmware 2.5.3 (the SDK's pre-3.1 HTTP
+#      API), 3.1.0 (the staged-configuration API) or 3.2.0 (scans with the WINDOW field), and
+#      2.3.0 for the firmware floor (5).
+#   6. sensor-tool (docs/sensor-tool.md) is in the image and runs with the host's own container
+#      options: a usage error is its one JSON object, and it reads the fake sensor (firmware
+#      2.5.3) over HTTP without writing to it. No real sensor is contacted.
 set -euo pipefail
 
 IMAGE=${1:?usage: smoke.sh IMAGE [OLD_IMAGE]}
@@ -27,7 +31,11 @@ WORK=$(mktemp -d)
 NAME=ouster-smoke-$$
 FAKE=
 FAILED=0
-RECORDING=/repo/ouster-ros/ouster-sdk/tests/pcaps/OS-2-128-U1_v2.3.0_1024x10
+RECORDING=/repo/docker/smoke/recording/OS-2-128-U1_v2.3.0_1024x10
+# Firmware the fake sensor reports to this image's SDK (0.16 refuses firmware before 2.4.0).
+FW_OLD_API=2.5.3
+FW_NEW_API=3.1.0
+FW_WINDOW=3.2.0  # the first firmware whose scans carry the WINDOW field
 LEGACY_CMD='["ros2","launch","ouster_ros","driver.launch.py","sensor_hostname:=192.168.1.201","viz:=false"]'
 
 fail() { echo "SMOKE FAIL: $*" >&2; FAILED=1; }
@@ -60,10 +68,10 @@ env_args() {
     done < "$1"
 }
 
-start_fake() {  # LABEL
+start_fake() {  # LABEL [FIRMWARE]: empty firmware = the recording's own (2.3.0)
     # shellcheck disable=SC2024  # the log is the runner's file, written by the shell
     sudo python3 "$HERE/fake_sensor.py" --sensor-ip "$SENSOR_IP" --seconds 120 \
-        --summary "$WORK/$1.fake.json" > "$WORK/$1.fake.log" 2>&1 &
+        --firmware "${2:-}" --summary "$WORK/$1.fake.json" > "$WORK/$1.fake.log" 2>&1 &
     FAKE=$!
     for _ in $(seq 50); do
         curl -sf "http://$SENSOR_IP/api/v1/system/firmware" > /dev/null && return 0
@@ -94,6 +102,25 @@ diagnose() {  # NODE: lifecycle state and topics, as the driver's uid (after a f
         --tmpfs /tmp -e ROS_HOME=/tmp/ros -e ROS_LOG_DIR=/tmp/ros/log --entrypoint bash "$IMAGE" -c \
         'source /opt/ros/jazzy/setup.bash && echo "lifecycle $1: $(ros2 lifecycle get "$1" 2>&1)"; ros2 topic list -t 2>&1 | head -20' \
         diag "$1" || true
+}
+
+# sensor_writes LABEL [--exact] ALLOWED...: what the driver changed on the fake sensor (its
+# configuration before and after); fails when a setting outside ALLOWED changed (with --exact:
+# unless exactly ALLOWED changed), nothing was configured or something was persisted.
+sensor_writes() {
+    python3 - "$WORK/$1.fake.json" "$@" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1])); label, rest = sys.argv[2], sys.argv[3:]
+exact = rest[:1] == ["--exact"]
+allowed = set(rest[1:] if exact else rest)
+before, after = s["initial"], s["active"]
+changed = {k: [before.get(k), after.get(k)] for k in sorted(set(before) | set(after))
+           if before.get(k) != after.get(k)}
+print(f"{label}: firmware {s['firmware']}, sensor settings changed by the driver: "
+      f"{json.dumps(changed, sort_keys=True)}, reinitialized {s['reinits']}x, persisted {s['persisted']}x")
+fits = set(changed) == allowed if exact else set(changed) <= allowed
+sys.exit(0 if s["reinits"] and fits and not s["persisted"] else 1)
+PY
 }
 
 stop_and_expect_zero() {  # LABEL
@@ -135,30 +162,42 @@ for case in "$REPO"/tests/legacy/cases/*.env; do
     fi
 done
 
-legacy_run() {  # LABEL IMAGE: the fleet compose (no command: the image's CMD) against the fake sensor
-    start_fake "$1"
+legacy_run() {  # LABEL IMAGE FIRMWARE [check_cloud args]: the fleet compose (no command: the image's CMD)
+    local label=$1 image=$2 firmware=$3; shift 3
+    start_fake "$label" "$firmware"
     env_args "$REPO/tests/legacy/cases/fleet-compose-default-cmd.env"
-    docker run -d --name "$NAME" --network host --ipc host "${ENV_ARGS[@]}" "$2" > /dev/null
-    if check_cloud "$1" /ouster/points os_lidar --clouds 3 --timeout 90; then
-        ok "$1: /ouster/points in frame os_lidar from the recorded packets, every pixel"
+    docker run -d --name "$NAME" --network host --ipc host "${ENV_ARGS[@]}" "$image" > /dev/null
+    if check_cloud "$label" /ouster/points os_lidar --clouds 3 --timeout 90 "$@"; then
+        ok "$label: /ouster/points in frame os_lidar from the recorded packets, every pixel ($*)"
     else
-        fail "$1: cloud check failed"
+        fail "$label: cloud check failed"
+        docker logs "$NAME" 2>&1 | grep -v -E 'fake-sensor' | tail -n 40 || true
     fi
     docker stop -t 15 "$NAME" > /dev/null || true
-    docker logs "$NAME" > "$WORK/$1.driver.log" 2>&1 || true
+    docker logs "$NAME" > "$WORK/$label.driver.log" 2>&1 || true
     docker rm -f "$NAME" > /dev/null 2>&1 || true
     stop_fake
-    cat "$WORK/$1.fake.log" | grep -v 'fake-sensor: GET' || true
+    grep -v -E 'fake-sensor: (GET|POST)' "$WORK/$label.fake.log" || true
 }
-legacy_run legacy "$IMAGE"
+legacy_run legacy "$IMAGE" "$FW_OLD_API" --check-t --imu-topic /ouster/imu --imu-frame os_imu
+# The vendor's parameter file (0.15) writes its time-sync defaults to the sensor at every start;
+# on a sensor with the factory settings (the fake sensor's) that changes sync_pulse_out_polarity
+# (ACTIVE_HIGH -> ACTIVE_LOW). docs/VENDOR_DIFF.md.
+expect "legacy: the driver changed only the destination, the ports and sync_pulse_out_polarity on the sensor" \
+    sensor_writes legacy --exact udp_dest udp_port_lidar udp_port_imu sync_pulse_out_polarity
 grep -E "Will use automatic UDP destination|lidar port set to zero" "$WORK/legacy.driver.log" | head -3 || true
 if [[ -n "$OLD_IMAGE" ]]; then
     IMAGE_UNDER_TEST=$IMAGE
-    legacy_run legacy-old "$OLD_IMAGE"
+    # The released image's SDK (0.11.1) is given the recording's own firmware, 2.3.0.
+    legacy_run legacy-old "$OLD_IMAGE" ""
     if python3 - "$WORK/legacy.check.json" "$WORK/legacy-old.check.json" <<'PY'
 import json, sys
 new, old = (json.load(open(p)) for p in sys.argv[1:3])
-strip = lambda r: {k: v for k, v in r.items() if k != "cloud_list"} | {"shape": [
+# The per-point time t is expected to differ (docs/VENDOR_DIFF.md): compared separately.
+T = ("t_measured_column", "t_output_column")
+print("t (new, old):", [new.get("pixels", {}).get(k) for k in T], [old.get("pixels", {}).get(k) for k in T])
+strip = lambda r: {k: v for k, v in r.items() if k not in ("cloud_list", "pixels", "imu")} | {
+    "pixels": {k: v for k, v in r.get("pixels", {}).items() if k not in T}} | {"shape": [
     {k: c[k] for k in ("frame_id", "width", "height", "fields")} for c in r["cloud_list"]]}
 a, b = strip(new), strip(old)
 print(json.dumps({"new": a, "old": b}, indent=1)[:3000])
@@ -221,10 +260,15 @@ RESTRICT=(--network host --ipc host --user 97000:97000 --read-only --tmpfs /tmp
 echo "== 4a. contract run: defaults (TIME_MODE host, automatic destination), SENSOR_ID east"
 CONTRACT_ENV=(-e METROLLA_DRIVER_CONTRACT=1 -e LIDAR_MODEL=ouster-os2-128 -e "SENSOR_IP=$SENSOR_IP"
               -e SENSOR_ID=east)
-start_fake contract
+start_fake contract "$FW_NEW_API"
 docker run -d --name "$NAME" "${RESTRICT[@]}" "${CONTRACT_ENV[@]}" "$IMAGE" > /dev/null
 sleep 3
-[[ "$(docker inspect -f '{{.State.Running}}' "$NAME")" == true ]] || fail "driver not running"
+if [[ "$(docker inspect -f '{{.State.Running}}' "$NAME")" != true ]]; then
+    fail "driver not running (exit $(docker inspect -f '{{.State.ExitCode}}' "$NAME"))"
+    docker logs "$NAME" 2>&1 | tail -n 60
+    echo "SMOKE FAILED"
+    exit 1
+fi
 uid=$(docker exec "$NAME" sh -c 'stat -c %u /proc/1')
 expect "driver runs as uid $uid (97000)" test "$uid" = 97000
 comm=$(docker exec "$NAME" cat /proc/1/comm)
@@ -233,8 +277,9 @@ docker run --rm "${CONTRACT_ENV[@]}" "$IMAGE" check | sed '$d' > "$WORK/expected
 docker exec "$NAME" cat /tmp/ouster/driver_params.yaml > "$WORK/actual.yaml"
 expect "/tmp/ouster/driver_params.yaml in the container equals check's render" \
     diff -u "$WORK/expected.yaml" "$WORK/actual.yaml"
-if CHECK_USER=97000:97000 check_cloud contract /east/points east_os_lidar --clouds 3 --timeout 90; then
-    ok "contract: /east/points in frame east_os_lidar, host-time stamps, every pixel"
+if CHECK_USER=97000:97000 check_cloud contract /east/points east_os_lidar --clouds 3 --timeout 90 --check-t \
+        --imu-topic /east/imu --imu-frame east_os_imu; then
+    ok "contract: /east/points in frame east_os_lidar, host-time stamps, every pixel and point time; /east/imu in east_os_imu, every value"
 else
     fail "contract: cloud check failed"; diagnose /east/os_driver
 fi
@@ -242,7 +287,7 @@ expect "contract: metadata written to /tmp/ouster/metadata.json" \
     docker exec "$NAME" test -s /tmp/ouster/metadata.json
 stop_and_expect_zero contract
 stop_fake
-cat "$WORK/contract.fake.log" | grep -v 'fake-sensor: GET' || true
+grep -v -E 'fake-sensor: (GET|POST)' "$WORK/contract.fake.log" || true
 if python3 - "$WORK/contract.fake.json" "$SENSOR_IP" <<'PY'
 import json, sys
 s = json.load(open(sys.argv[1])); a = s["active"]
@@ -250,18 +295,21 @@ print(json.dumps({k: a[k] for k in ("udp_dest", "udp_port_lidar", "udp_port_imu"
 sys.exit(0 if (a["udp_port_lidar"], a["udp_port_imu"], a["udp_dest"], a["timestamp_mode"], s["persisted"]) == (7502, 7503, sys.argv[2], "TIME_FROM_INTERNAL_OSC", 0) else 1)
 PY
 then ok "contract: sensor configured with ports 7502/7503, automatic destination, its own time mode kept, nothing persisted"; else fail "contract: sensor configuration (above)"; fi
+expect "contract: nothing but the destination and ports changed on the sensor (time-sync wiring kept)" \
+    sensor_writes contract udp_dest udp_port_lidar udp_port_imu
 
 echo "== 4b. contract run: TIME_MODE ptp, HOST_IP, DATA_PORT 7600, absolute POINTCLOUD_TOPIC, FRAME_ID"
 CONTRACT_ENV=(-e METROLLA_DRIVER_CONTRACT=1 -e LIDAR_MODEL=OS-2-128 -e "SENSOR_IP=$SENSOR_IP"
               -e "HOST_IP=$HOST_ALIAS/24" -e DATA_PORT=7600 -e TIME_MODE=ptp -e DEVICE_PORT=80
               -e POINTCLOUD_TOPIC=/lidar/ouster_points -e FRAME_ID=ouster_top -e PUBLISH_SCAN=false
               -e DUAL_LIDAR=false)
-start_fake contract-ptp
+start_fake contract-ptp "$FW_WINDOW"
 docker run -d --name "$NAME" "${RESTRICT[@]}" "${CONTRACT_ENV[@]}" "$IMAGE" > /dev/null
 # The fake sensor stamps packets with UTC; with TIME_FROM_PTP_1588 the driver subtracts the
 # 37 s TAI-UTC offset (ptp_utc_tai_offset), so stamps are about 37 s behind the clock here.
-if CHECK_USER=97000:97000 check_cloud contract-ptp /lidar/ouster_points ouster_top --clouds 3 --timeout 90 --stamp-window 40; then
-    ok "contract ptp: /lidar/ouster_points in frame ouster_top, every pixel"
+if CHECK_USER=97000:97000 check_cloud contract-ptp /lidar/ouster_points ouster_top --clouds 3 --timeout 90 --stamp-window 40 --check-t \
+        --imu-topic /ouster/imu --imu-frame os_imu; then
+    ok "contract ptp: /lidar/ouster_points in frame ouster_top, every pixel and point time; /ouster/imu"
 else
     fail "contract ptp: cloud check failed"; diagnose /ouster/os_driver
 fi
@@ -282,9 +330,11 @@ print(json.dumps({k: a[k] for k in ("udp_dest", "udp_port_lidar", "udp_port_imu"
 sys.exit(0 if (a["udp_port_lidar"], a["udp_port_imu"], a["udp_dest"], a["timestamp_mode"], s["persisted"]) == (7600, 7601, sys.argv[2], "TIME_FROM_PTP_1588", 0) else 1)
 PY
 then ok "contract ptp: sensor set to TIME_FROM_PTP_1588, destination HOST_IP, ports 7600/7601"; else fail "contract ptp: sensor configuration (above)"; fi
+expect "contract ptp: nothing but the destination, ports and time mode changed on the sensor" \
+    sensor_writes contract-ptp udp_dest udp_port_lidar udp_port_imu timestamp_mode
 
 echo "== 4c. contract: SIGTERM while packets arrive, five times (past bug: exit 139)"
-start_fake stops
+start_fake stops "$FW_OLD_API"
 for i in 1 2 3 4 5; do
     docker run -d --name "$NAME" "${RESTRICT[@]}" -e METROLLA_DRIVER_CONTRACT=1 -e LIDAR_MODEL=os2-128 \
         -e "SENSOR_IP=$SENSOR_IP" "$IMAGE" > /dev/null
@@ -293,7 +343,26 @@ for i in 1 2 3 4 5; do
 done
 stop_fake
 
-echo "== 5. sensor-tool is in the image and answers as the host runs it"
+echo "== 5. firmware floor: the SDK (0.16) refuses a sensor on firmware 2.3.0"
+start_fake fw-2.3 ""
+docker run -d --name "$NAME" "${RESTRICT[@]}" -e METROLLA_DRIVER_CONTRACT=1 -e LIDAR_MODEL=os2-128 \
+    -e "SENSOR_IP=$SENSOR_IP" "$IMAGE" > /dev/null
+sleep 15
+running=$(docker inspect -f '{{.State.Running}}' "$NAME")
+docker stop -t 15 "$NAME" > /dev/null || true
+code=$(docker inspect -f '{{.State.ExitCode}}' "$NAME")
+docker logs "$NAME" > "$WORK/fw-2.3.driver.log" 2>&1 || true
+docker rm -f "$NAME" > /dev/null 2>&1 || true
+stop_fake
+grep -m 3 -E "FW 2.4|Attempting to communicate" "$WORK/fw-2.3.driver.log" || true
+echo "fw-2.3: driver was running after 15 s: $running; exit code after docker stop: $code"
+expect "fw-2.3: the driver says the sensor needs firmware 2.4 or later" \
+    grep -q "Please upgrade your sensor to FW 2.4 or later" "$WORK/fw-2.3.driver.log"
+expect "fw-2.3: the sensor was not configured and sent nothing" python3 -c '
+import json, sys; s = json.load(open(sys.argv[1])); print("reinits", s["reinits"], "sent", s["sent"])
+sys.exit(0 if s["reinits"] == 0 and s["sent"]["lidar"] == 0 else 1)' "$WORK/fw-2.3.fake.json"
+
+echo "== 6. sensor-tool is in the image and answers as the host runs it"
 # The host's own options (metrolla-edge, sensor.program).
 TOOL=(docker run --rm --network host --read-only --cap-drop ALL --security-opt no-new-privileges:true
       --user 65534:65534 --pids-limit 64 --memory 256m --tmpfs /tmp:size=8m --entrypoint sensor-tool "$IMAGE")
@@ -304,7 +373,8 @@ import json, sys
 answer = json.loads(sys.argv[1])
 assert (answer["sensor_tool"], answer["vendor"], answer["command"], answer["outcome"], answer["exit_code"]) == (1, "ouster", "probe", "refused", 1)
 ' "$tool_out"
-start_fake tool
+# Firmware 2.5.3: the tool reads the configuration with the pre-3.1 sensor/cmd API only.
+start_fake tool "$FW_OLD_API"
 tool_out=$("${TOOL[@]}" get-net --ip "$SENSOR_IP") && tool_code=0 || tool_code=$?
 expect "sensor-tool get-net reads the fake sensor without --driver-stopped (exit $tool_code)" test "$tool_code" = 0
 expect "sensor-tool get-net reports the fake sensor: $tool_out" python3 -c '
@@ -319,7 +389,7 @@ stop_fake
 expect "sensor-tool sent the fake sensor no write" python3 -c '
 import json, sys
 s = json.load(open(sys.argv[1]))
-assert s["reinits"] == 0 and s["persisted"] == 0 and not [r for r in s["requests"] if "set_config_param" in r or r.startswith("PUT")], s["requests"]
+assert s["reinits"] == 0 and s["persisted"] == 0 and not [r for r in s["requests"] if "set_config_param" in r or r.startswith(("PUT", "POST"))], s["requests"]
 ' "$WORK/tool.fake.json"
 
 if [[ $FAILED != 0 ]]; then
