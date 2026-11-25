@@ -16,6 +16,9 @@
 #      stop on SIGTERM (exit 0). The fake sensor reports firmware 2.5.3 (the SDK's pre-3.1 HTTP
 #      API), 3.1.0 (the staged-configuration API) or 3.2.0 (scans with the WINDOW field), and
 #      2.3.0 for the firmware floor (5).
+#   6. sensor-tool (docs/sensor-tool.md) is in the image and runs with the host's own container
+#      options: a usage error is its one JSON object, and it reads the fake sensor (firmware
+#      2.5.3) over HTTP without writing to it. No real sensor is contacted.
 set -euo pipefail
 
 IMAGE=${1:?usage: smoke.sh IMAGE [OLD_IMAGE]}
@@ -164,7 +167,7 @@ legacy_run() {  # LABEL IMAGE FIRMWARE [check_cloud args]: the fleet compose (no
     start_fake "$label" "$firmware"
     env_args "$REPO/tests/legacy/cases/fleet-compose-default-cmd.env"
     docker run -d --name "$NAME" --network host --ipc host "${ENV_ARGS[@]}" "$image" > /dev/null
-    if check_cloud "$label" /ouster/points os_lidar --clouds 3 --timeout 90 "$@"; then
+    if check_cloud "$label" /ouster/points os_lidar --clouds 5 --timeout 90 "$@"; then
         ok "$label: /ouster/points in frame os_lidar from the recorded packets, every pixel ($*)"
     else
         fail "$label: cloud check failed"
@@ -190,10 +193,13 @@ if [[ -n "$OLD_IMAGE" ]]; then
     if python3 - "$WORK/legacy.check.json" "$WORK/legacy-old.check.json" <<'PY'
 import json, sys
 new, old = (json.load(open(p)) for p in sys.argv[1:3])
-# The per-point time t is expected to differ (docs/VENDOR_DIFF.md): compared separately.
+# The per-point time t is expected to differ (docs/VENDOR_DIFF.md): compared separately. The
+# first clouds may be either driver's start-up scans (check_cloud.py), so the first complete
+# cloud's pixel report is the one compared.
 T = ("t_measured_column", "t_output_column")
 print("t (new, old):", [new.get("pixels", {}).get(k) for k in T], [old.get("pixels", {}).get(k) for k in T])
-strip = lambda r: {k: v for k, v in r.items() if k not in ("cloud_list", "pixels", "imu")} | {
+strip = lambda r: {k: v for k, v in r.items()
+                   if k not in ("cloud_list", "pixels", "imu", "start_up_clouds", "later_clouds")} | {
     "pixels": {k: v for k, v in r.get("pixels", {}).items() if k not in T}} | {"shape": [
     {k: c[k] for k in ("frame_id", "width", "height", "fields")} for c in r["cloud_list"]]}
 a, b = strip(new), strip(old)
@@ -274,7 +280,7 @@ docker run --rm "${CONTRACT_ENV[@]}" "$IMAGE" check | sed '$d' > "$WORK/expected
 docker exec "$NAME" cat /tmp/ouster/driver_params.yaml > "$WORK/actual.yaml"
 expect "/tmp/ouster/driver_params.yaml in the container equals check's render" \
     diff -u "$WORK/expected.yaml" "$WORK/actual.yaml"
-if CHECK_USER=97000:97000 check_cloud contract /east/points east_os_lidar --clouds 3 --timeout 90 --check-t \
+if CHECK_USER=97000:97000 check_cloud contract /east/points east_os_lidar --clouds 5 --timeout 90 --check-t \
         --imu-topic /east/imu --imu-frame east_os_imu; then
     ok "contract: /east/points in frame east_os_lidar, host-time stamps, every pixel and point time; /east/imu in east_os_imu, every value"
 else
@@ -304,7 +310,7 @@ start_fake contract-ptp "$FW_WINDOW"
 docker run -d --name "$NAME" "${RESTRICT[@]}" "${CONTRACT_ENV[@]}" "$IMAGE" > /dev/null
 # The fake sensor stamps packets with UTC; with TIME_FROM_PTP_1588 the driver subtracts the
 # 37 s TAI-UTC offset (ptp_utc_tai_offset), so stamps are about 37 s behind the clock here.
-if CHECK_USER=97000:97000 check_cloud contract-ptp /lidar/ouster_points ouster_top --clouds 3 --timeout 90 --stamp-window 40 --check-t \
+if CHECK_USER=97000:97000 check_cloud contract-ptp /lidar/ouster_points ouster_top --clouds 5 --timeout 90 --stamp-window 40 --check-t \
         --imu-topic /ouster/imu --imu-frame os_imu; then
     ok "contract ptp: /lidar/ouster_points in frame ouster_top, every pixel and point time; /ouster/imu"
 else
@@ -358,6 +364,36 @@ expect "fw-2.3: the driver says the sensor needs firmware 2.4 or later" \
 expect "fw-2.3: the sensor was not configured and sent nothing" python3 -c '
 import json, sys; s = json.load(open(sys.argv[1])); print("reinits", s["reinits"], "sent", s["sent"])
 sys.exit(0 if s["reinits"] == 0 and s["sent"]["lidar"] == 0 else 1)' "$WORK/fw-2.3.fake.json"
+
+echo "== 6. sensor-tool is in the image and answers as the host runs it"
+# The host's own options (metrolla-edge, sensor.program).
+TOOL=(docker run --rm --network host --read-only --cap-drop ALL --security-opt no-new-privileges:true
+      --user 65534:65534 --pids-limit 64 --memory 256m --tmpfs /tmp:size=8m --entrypoint sensor-tool "$IMAGE")
+tool_out=$("${TOOL[@]}" probe) && tool_code=0 || tool_code=$?
+expect "sensor-tool exits 1 for a usage error (exit $tool_code)" test "$tool_code" = 1
+expect "sensor-tool prints one JSON object of interface 1: $tool_out" python3 -c '
+import json, sys
+answer = json.loads(sys.argv[1])
+assert (answer["sensor_tool"], answer["vendor"], answer["command"], answer["outcome"], answer["exit_code"]) == (1, "ouster", "probe", "refused", 1)
+' "$tool_out"
+# Firmware 2.5.3: the tool reads the configuration with the pre-3.1 sensor/cmd API only.
+start_fake tool "$FW_OLD_API"
+tool_out=$("${TOOL[@]}" get-net --ip "$SENSOR_IP") && tool_code=0 || tool_code=$?
+expect "sensor-tool get-net reads the fake sensor without --driver-stopped (exit $tool_code)" test "$tool_code" = 0
+expect "sensor-tool get-net reports the fake sensor: $tool_out" python3 -c '
+import json, sys
+answer = json.loads(sys.argv[1])
+assert (answer["outcome"], answer["identity"]["model"], answer["after"]["net"]["ip"]) == ("reported", "OS-2-128", sys.argv[2])
+assert answer["after"]["dest"]["data_port"] == 7502 and answer["sessions"]["max_concurrent"] == 1
+' "$tool_out" "$SENSOR_IP"
+tool_out=$("${TOOL[@]}" set-dest --ip "$SENSOR_IP" --dest-ip "$HOST_ALIAS" --data-port 7600) && tool_code=0 || tool_code=$?
+expect "sensor-tool refuses a write without --driver-stopped (exit $tool_code)" test "$tool_code" = 1
+stop_fake
+expect "sensor-tool sent the fake sensor no write" python3 -c '
+import json, sys
+s = json.load(open(sys.argv[1]))
+assert s["reinits"] == 0 and s["persisted"] == 0 and not [r for r in s["requests"] if "set_config_param" in r or r.startswith(("PUT", "POST"))], s["requests"]
+' "$WORK/tool.fake.json"
 
 if [[ $FAILED != 0 ]]; then
     for log in "$WORK"/*.driver.log; do echo "== $log"; tail -n 60 "$log"; done

@@ -2,6 +2,13 @@
 Changelog
 =========
 
+[unreleased]
+============
+* [Metrolla] Add ``sensor-tool`` to the driver image (``/usr/local/bin/sensor-tool``, ``docker/sensor_tool.py``):
+  reads an Ouster sensor's address, data destination and clock source over its HTTP API and sets them
+  (``probe``, ``get-net``, ``set-net``, ``set-dest``, ``set-ptp``). Tested against a fake sensor only; see
+  ``docs/sensor-tool.md``.
+
 ouster_ros v0.15.0
 ==================
 * [BUGIX] fix improper scaling of mask image when row step is not 1.
